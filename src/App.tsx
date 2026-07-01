@@ -86,6 +86,19 @@ export default function App() {
     initApp();
   }, []);
 
+  // Real-time synchronization for the logged-in user's profile
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    const unsubscribe = onSnapshot(doc(db, "employees", currentUser.id), (snapshot) => {
+      if (snapshot.exists()) {
+        const liveData = snapshot.data() as Employee;
+        setCurrentUser(liveData);
+        localStorage.setItem("wsm_user_session", JSON.stringify(liveData));
+      }
+    });
+    return () => unsubscribe();
+  }, [currentUser?.id]);
+
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError("");
@@ -144,16 +157,17 @@ export default function App() {
       name: regName,
       lastName: regLastName,
       position: "Operator",
-      jobPosition: "พนักงานลงทะเบียนใหม่",
+      jobPosition: "พนักงานลงทะเบียนใหม่ (รออนุมัติ)",
       department: regDept,
       status: "Active",
       role: regRole,
       shiftWork: "DAY",
+      approved: false,
     };
 
     try {
       await setDoc(doc(db, "employees", regId), newEmp);
-      alert("ลงทะเบียนพนักงานใหม่สำเร็จ! คุณสามารถลงชื่อเข้างานได้ทันที");
+      alert("ส่งคำขอลงทะเบียนสำเร็จ! บัญชีของคุณเริ่มต้นให้เข้าดูระบบได้เท่านั้น จนกว่าแอดมินจะยืนยันสิทธิ์เข้าถึงเต็มรูปแบบ");
       setShowRegister(false);
       setLoginId(regId);
       setLoginPin(regPin);
@@ -238,11 +252,14 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setShowRegister(true)}
-                className="text-xs font-bold text-red-600 hover:underline flex items-center justify-center gap-1.5 mx-auto"
+                className="text-xs font-bold text-red-600 hover:underline flex items-center justify-center gap-1.5 mx-auto cursor-pointer"
               >
                 <UserPlus2 className="w-4 h-4" />
-                <span>ขึ้นทะเบียนพนักงานใหม่ (สมัครพนักงานสำหรับการทดสอบ)</span>
+                <span>ส่งคำขอลงทะเบียน สมัครงานระบบใหม่</span>
               </button>
+              <p className="text-[10px] text-gray-400 mt-1 max-w-xs mx-auto">
+                * เริ่มต้นลงทะเบียนจะเข้าดูระบบได้เท่านั้น จนกว่าแอดมินจะยืนยันอนุมัติสิทธิ์เข้าถึง
+              </p>
             </div>
           </form>
         </div>
@@ -253,15 +270,19 @@ export default function App() {
             <div className="bg-white w-full max-w-md rounded-3xl overflow-hidden shadow-2xl border border-gray-100 flex flex-col">
               <div className="bg-gradient-to-r from-red-600 to-red-700 p-6 text-white flex justify-between items-center">
                 <span className="font-bold flex items-center gap-2">
-                  <UserPlus2 className="w-5 h-5" /> ขึ้นทะเบียนพนักงานใหม่
+                  <UserPlus2 className="w-5 h-5" /> ส่งคำขอลงทะเบียนสมัครพนักงาน
                 </span>
                 <button
                   type="button"
                   onClick={() => setShowRegister(false)}
-                  className="hover:bg-red-800 p-1 rounded-full text-white/80"
+                  className="hover:bg-red-800 p-1 rounded-full text-white/80 cursor-pointer"
                 >
                   <X />
                 </button>
+              </div>
+
+              <div className="bg-amber-50 text-amber-800 p-4 border-b border-amber-100 text-xs">
+                ⚠️ <strong>เงื่อนไขสิทธิ์ระบบ:</strong> บัญชีลงทะเบียนใหม่จะเริ่มต้นด้วยสิทธิ์ <strong>เข้าดูระบบ (View Only)</strong> เท่านั้น จนกว่าแอดมินหรือหัวหน้างานจะตรวจเช็คและกดอนุมัติสิทธิ์เต็มรูปแบบในเมนูจัดการพนักงาน
               </div>
 
               <form onSubmit={handleRegisterSubmit} className="p-6 space-y-4 text-sm">
@@ -549,6 +570,18 @@ export default function App() {
           <button onClick={() => setActiveTab("time_attendance")} className={`px-2.5 py-1.5 rounded-lg transition-colors ${activeTab === "time_attendance" ? "bg-red-600 text-white" : "hover:bg-white/5"}`}>กะ/เช็คอิน</button>
           <button onClick={() => setActiveTab("settings")} className={`px-2.5 py-1.5 rounded-lg transition-colors ${activeTab === "settings" ? "bg-red-600 text-white" : "hover:bg-white/5"}`}>ตั้งค่า</button>
         </div>
+
+        {currentUser?.approved === false && (
+          <div className="bg-gradient-to-r from-amber-500 to-amber-600 text-white px-5 py-4 rounded-2xl mb-6 shadow-md border border-amber-400/20">
+            <p className="font-extrabold text-sm flex items-center gap-2">
+              <span className="inline-block w-2.5 h-2.5 rounded-full bg-white animate-ping" />
+              <span>⚠️ บัญชีอยู่ระหว่างรออนุมัติ (โหมดเข้าดูระบบได้เท่านั้น)</span>
+            </p>
+            <p className="text-xs text-amber-50 mt-1">
+              บัญชีพนักงานของคุณได้ส่งคำขอลงทะเบียนเรียบร้อยแล้ว ในช่วงเริ่มต้นนี้คุณจะสามารถ <strong>เข้าดูระบบได้เท่านั้น (View-Only Mode)</strong> จะไม่สามารถทำรายการ สแกน หรือยืนยันส่งข้อมูลใดๆ ลงฐานข้อมูลได้ จนกว่าแอดมินหรือหัวหน้างานจะยืนยันอนุมัติสิทธิ์เข้าใช้งานของคุณในระบบพนักงาน
+            </p>
+          </div>
+        )}
 
         <div className="flex-1">
           {activeTab === "dashboard" && <DashboardView />}

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { collection, onSnapshot, doc, setDoc, deleteDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import { Employee } from "../types";
-import { ShieldAlert, UserPlus, Users, Trash2, Edit3, Check, X, ShieldCheck } from "lucide-react";
+import { ShieldAlert, UserPlus, Users, Trash2, Edit3, Check, X, ShieldCheck, Eye, EyeOff, Edit } from "lucide-react";
 
 interface EmployeesViewProps {
   currentUser: Employee | null;
@@ -32,6 +32,22 @@ export default function EmployeesView({ currentUser }: EmployeesViewProps) {
   const [newRole, setNewRole] = useState("user_production");
   const [newStatus, setNewStatus] = useState<"Active" | "Inactive">("Active");
   const [newShift, setNewShift] = useState<"DAY" | "NIGHT">("DAY");
+
+  // Edit Employee State
+  const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
+  const [editPin, setEditPin] = useState("");
+  const [editName, setEditName] = useState("");
+  const [editLastName, setEditLastName] = useState("");
+  const [editPosition, setEditPosition] = useState("");
+  const [editJobPosition, setEditJobPosition] = useState("");
+  const [editDept, setEditDept] = useState("ฝ่ายผลิต");
+  const [editRole, setEditRole] = useState("user_production");
+  const [editStatus, setEditStatus] = useState<"Active" | "Inactive">("Active");
+  const [editShift, setEditShift] = useState<"DAY" | "NIGHT">("DAY");
+
+  // Check PIN State
+  const [checkingPinEmp, setCheckingPinEmp] = useState<Employee | null>(null);
+  const [showPinCode, setShowPinCode] = useState(false);
 
   // Admin Verification Gate
   const [verificationModalOpen, setVerificationModalOpen] = useState(false);
@@ -116,6 +132,7 @@ export default function EmployeesView({ currentUser }: EmployeesViewProps) {
       status: newStatus,
       role: newRole,
       shiftWork: newShift,
+      approved: true,
     };
 
     try {
@@ -185,6 +202,64 @@ export default function EmployeesView({ currentUser }: EmployeesViewProps) {
     } catch (err) {
       console.error(err);
     }
+  };
+
+  const handleStartEditEmployee = (emp: Employee) => {
+    setEditingEmployee(emp);
+    setEditPin(emp.pin);
+    setEditName(emp.name);
+    setEditLastName(emp.lastName);
+    setEditPosition(emp.position || "");
+    setEditJobPosition(emp.jobPosition || "");
+    setEditDept(emp.department);
+    setEditRole(emp.role);
+    setEditStatus(emp.status);
+    setEditShift(emp.shiftWork);
+  };
+
+  const handleSaveEditEmployee = async () => {
+    if (!editingEmployee) return;
+
+    if (!editPin || editPin.length !== 6) {
+      alert("PIN สำหรับลงชื่อเข้างานต้องมี 6 หลัก");
+      return;
+    }
+
+    const updatedEmp: Employee = {
+      ...editingEmployee,
+      pin: editPin,
+      name: editName,
+      lastName: editLastName,
+      position: editPosition,
+      jobPosition: editJobPosition,
+      department: editDept,
+      status: editStatus,
+      role: editRole,
+      shiftWork: editShift,
+    };
+
+    triggerVerifiedAction(async () => {
+      try {
+        await setDoc(doc(db, "employees", editingEmployee.id), updatedEmp);
+        alert(`แก้ไขข้อมูลพนักงาน ${editName} สำเร็จ`);
+        setEditingEmployee(null);
+      } catch (err) {
+        console.error(err);
+        alert("เกิดข้อผิดพลาดในการแก้ไขข้อมูล");
+      }
+    });
+  };
+
+  const handleApproveEmployee = async (id: string, name: string) => {
+    triggerVerifiedAction(async () => {
+      try {
+        await setDoc(doc(db, "employees", id), { approved: true }, { merge: true });
+        alert(`อนุมัติสิทธิ์พนักงาน ${name} สำเร็จเรียบร้อยแล้ว!`);
+      } catch (err) {
+        console.error(err);
+        alert("เกิดข้อผิดพลาดในการอนุมัติ");
+      }
+    });
   };
 
   return (
@@ -432,7 +507,7 @@ export default function EmployeesView({ currentUser }: EmployeesViewProps) {
                 <th className="p-4">สิทธิ์การใช้งาน (Role)</th>
                 <th className="p-4">กะทำงาน (Shift)</th>
                 <th className="p-4">สถานะ</th>
-                {isAuthorizedToEdit && <th className="p-4 text-center w-20">ลบ</th>}
+                {isAuthorizedToEdit && <th className="p-4 text-center w-36">การจัดการ</th>}
               </tr>
             </thead>
             <tbody>
@@ -440,7 +515,14 @@ export default function EmployeesView({ currentUser }: EmployeesViewProps) {
                 <tr key={emp.id} className="border-b last:border-0 hover:bg-gray-50/50 transition">
                   <td className="p-4 font-mono font-bold text-gray-900">{emp.id}</td>
                   <td className="p-4">
-                    <div className="font-semibold text-gray-800">{emp.name} {emp.lastName}</div>
+                    <div className="flex items-center gap-1">
+                      <div className="font-semibold text-gray-800">{emp.name} {emp.lastName}</div>
+                      {emp.approved === false && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                          รออนุมัติ
+                        </span>
+                      )}
+                    </div>
                     <div className="text-[10px] text-gray-400 font-medium">{emp.jobPosition || emp.position}</div>
                   </td>
                   <td className="p-4 font-medium text-gray-600">{emp.department}</td>
@@ -479,12 +561,42 @@ export default function EmployeesView({ currentUser }: EmployeesViewProps) {
                   </td>
                   {isAuthorizedToEdit && (
                     <td className="p-4 text-center">
-                      <button
-                        onClick={() => handleDeleteEmployee(emp.id, emp.name)}
-                        className="text-gray-400 hover:text-red-600 p-1.5 rounded-lg hover:bg-red-50 transition"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      <div className="flex justify-center items-center gap-1.5 flex-wrap">
+                        {emp.approved === false && (
+                          <button
+                            onClick={() => handleApproveEmployee(emp.id, emp.name)}
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-2 py-1 rounded-lg text-[10px] flex items-center gap-1 cursor-pointer transition"
+                            title="กดอนุมัติสิทธิ์"
+                          >
+                            <ShieldCheck className="w-3.5 h-3.5 text-white" />
+                            <span>อนุมัติ</span>
+                          </button>
+                        )}
+                        <button
+                          onClick={() => {
+                            setCheckingPinEmp(emp);
+                            setShowPinCode(false);
+                          }}
+                          className="text-gray-500 hover:text-blue-600 p-1.5 rounded-lg hover:bg-blue-50 transition cursor-pointer"
+                          title="เช็ค PIN"
+                        >
+                          <Eye className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleStartEditEmployee(emp)}
+                          className="text-gray-500 hover:text-amber-600 p-1.5 rounded-lg hover:bg-amber-50 transition cursor-pointer"
+                          title="แก้ไขข้อมูล"
+                        >
+                          <Edit3 className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteEmployee(emp.id, emp.name)}
+                          className="text-gray-400 hover:text-red-600 p-1.5 rounded-lg hover:bg-red-50 transition cursor-pointer"
+                          title="ลบพนักงาน"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </td>
                   )}
                 </tr>
@@ -534,6 +646,202 @@ export default function EmployeesView({ currentUser }: EmployeesViewProps) {
                   ยืนยันคำขอ
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* EDIT EMPLOYEE MODAL */}
+      {editingEmployee && (
+        <div className="fixed inset-0 z-[200] bg-black/60 flex items-center justify-center p-4 backdrop-blur-xs">
+          <div className="bg-white w-full max-w-lg rounded-2xl overflow-hidden shadow-2xl border border-gray-100 p-6 space-y-4 animate-in fade-in zoom-in duration-200">
+            <div className="flex justify-between items-center border-b pb-3">
+              <h3 className="font-bold text-gray-900 text-sm flex items-center gap-1.5">
+                <Edit3 className="w-5 h-5 text-red-600" /> แก้ไขข้อมูลพนักงาน ({editingEmployee.id})
+              </h3>
+              <button onClick={() => setEditingEmployee(null)} className="text-gray-400 hover:text-gray-600 cursor-pointer">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <form onSubmit={(e) => { e.preventDefault(); handleSaveEditEmployee(); }} className="space-y-4 text-xs">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="font-bold text-gray-700 block mb-1">ชื่อจริง *</label>
+                  <input
+                    type="text"
+                    required
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    className="w-full p-2 bg-white border border-gray-200 rounded-lg font-semibold focus:ring-2 focus:ring-red-500/20 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-gray-700 block mb-1">นามสกุล *</label>
+                  <input
+                    type="text"
+                    required
+                    value={editLastName}
+                    onChange={(e) => setEditLastName(e.target.value)}
+                    className="w-full p-2 bg-white border border-gray-200 rounded-lg font-semibold focus:ring-2 focus:ring-red-500/20 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="font-bold text-gray-700 block mb-1">PIN สำหรับล็อกอิน (6 หลัก) *</label>
+                  <input
+                    type="text"
+                    required
+                    maxLength={6}
+                    value={editPin}
+                    onChange={(e) => setEditPin(e.target.value.replace(/\D/g, ""))}
+                    className="w-full p-2 bg-white border border-gray-200 rounded-lg font-semibold focus:ring-2 focus:ring-red-500/20 focus:outline-none font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-gray-700 block mb-1">กะทำงาน (Shift) *</label>
+                  <select
+                    value={editShift}
+                    onChange={(e) => setEditShift(e.target.value as "DAY" | "NIGHT")}
+                    className="w-full p-2 bg-white border border-gray-200 rounded-lg font-semibold focus:ring-2 focus:ring-red-500/20 focus:outline-none"
+                  >
+                    <option value="DAY">DAY (กะกลางวัน)</option>
+                    <option value="NIGHT">NIGHT (กะกลางคืน)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="font-bold text-gray-700 block mb-1">ตำแหน่งงาน (Position)</label>
+                  <input
+                    type="text"
+                    value={editPosition}
+                    onChange={(e) => setEditPosition(e.target.value)}
+                    className="w-full p-2 bg-white border border-gray-200 rounded-lg font-semibold focus:ring-2 focus:ring-red-500/20 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-gray-700 block mb-1">คำอธิบายตำแหน่ง (Job Position)</label>
+                  <input
+                    type="text"
+                    value={editJobPosition}
+                    onChange={(e) => setEditJobPosition(e.target.value)}
+                    className="w-full p-2 bg-white border border-gray-200 rounded-lg font-semibold focus:ring-2 focus:ring-red-500/20 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="font-bold text-gray-700 block mb-1">แผนก (Department) *</label>
+                  <select
+                    value={editDept}
+                    onChange={(e) => setEditDept(e.target.value)}
+                    className="w-full p-2 bg-white border border-gray-200 rounded-lg font-semibold focus:ring-2 focus:ring-red-500/20 focus:outline-none"
+                  >
+                    {departments.map((dept, i) => (
+                      <option key={i} value={dept}>
+                        {dept}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="font-bold text-gray-700 block mb-1">สิทธิ์การใช้งาน *</label>
+                  <select
+                    value={editRole}
+                    onChange={(e) => setEditRole(e.target.value)}
+                    className="w-full p-2 bg-white border border-gray-200 rounded-lg font-semibold focus:ring-2 focus:ring-red-500/20 focus:outline-none"
+                  >
+                    {roles.map((r, i) => (
+                      <option key={i} value={r}>
+                        {r}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="font-bold text-gray-700 block mb-1">สถานะ *</label>
+                  <select
+                    value={editStatus}
+                    onChange={(e) => setEditStatus(e.target.value as "Active" | "Inactive")}
+                    className="w-full p-2 bg-white border border-gray-200 rounded-lg font-semibold focus:ring-2 focus:ring-red-500/20 focus:outline-none"
+                  >
+                    <option value="Active">Active</option>
+                    <option value="Inactive">Inactive</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t">
+                <button
+                  type="button"
+                  onClick={() => setEditingEmployee(null)}
+                  className="px-4 py-2 border rounded-xl hover:bg-gray-100 font-semibold cursor-pointer"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-black text-white rounded-xl hover:bg-gray-800 font-bold cursor-pointer"
+                >
+                  บันทึกการแก้ไข
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* CHECK PIN MODAL */}
+      {checkingPinEmp && (
+        <div className="fixed inset-0 z-[200] bg-black/60 flex items-center justify-center p-4 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl border border-gray-100 p-6 space-y-4 animate-in zoom-in duration-200">
+            <div className="flex justify-between items-center border-b pb-3">
+              <h3 className="font-bold text-gray-900 text-sm flex items-center gap-1.5">
+                <ShieldCheck className="w-5 h-5 text-emerald-600" /> ตรวจสอบ PIN พนักงาน
+              </h3>
+              <button onClick={() => setCheckingPinEmp(null)} className="text-gray-400 hover:text-gray-600 cursor-pointer">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3.5 text-center py-2">
+              <div className="mx-auto w-12 h-12 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-600">
+                <ShieldCheck className="w-6 h-6" />
+              </div>
+              <div>
+                <h4 className="font-bold text-gray-800 text-sm">{checkingPinEmp.name} {checkingPinEmp.lastName}</h4>
+                <p className="text-[11px] text-gray-400 font-mono mt-0.5">รหัสพนักงาน: {checkingPinEmp.id}</p>
+              </div>
+
+              <div className="bg-gray-50 p-4 rounded-xl border border-gray-100 flex flex-col items-center justify-center gap-2 font-semibold">
+                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">PIN Code สำหรับล็อกอิน</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-2xl font-black tracking-widest font-mono text-gray-900">
+                    {showPinCode ? checkingPinEmp.pin : "• • • • • •"}
+                  </span>
+                  <button
+                    onClick={() => setShowPinCode(!showPinCode)}
+                    className="p-1.5 hover:bg-gray-200 rounded-lg text-gray-500 transition cursor-pointer"
+                    title={showPinCode ? "ซ่อน PIN" : "แสดง PIN"}
+                  >
+                    {showPinCode ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-center pt-2">
+              <button
+                onClick={() => setCheckingPinEmp(null)}
+                className="w-full bg-black text-white py-2 rounded-xl text-xs font-bold hover:bg-gray-800 cursor-pointer"
+              >
+                ปิดหน้าต่าง
+              </button>
             </div>
           </div>
         </div>

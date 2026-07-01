@@ -89,6 +89,10 @@ export default function AttendanceView({ currentUser }: AttendanceViewProps) {
 
   const handleClockIn = async () => {
     if (!currentUser) return;
+    if (currentUser?.approved === false) {
+      alert("สิทธิ์การใช้งานของคุณคือเข้าดูระบบได้เท่านั้น ไม่สามารถดำเนินการเช็คอินหรือบันทึกเวลาได้");
+      return;
+    }
     const timeStr = currentTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
     const id = `${currentUser.id}_${todayStr}`;
 
@@ -113,6 +117,10 @@ export default function AttendanceView({ currentUser }: AttendanceViewProps) {
 
   const handleClockOut = async () => {
     if (!currentUser || !myRecordToday) return;
+    if (currentUser?.approved === false) {
+      alert("สิทธิ์การใช้งานของคุณคือเข้าดูระบบได้เท่านั้น ไม่สามารถดำเนินการเช็คเอาท์หรือบันทึกเวลาได้");
+      return;
+    }
     const timeStr = currentTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
 
     // Calculate hours and OT hours using our custom formulas
@@ -135,6 +143,10 @@ export default function AttendanceView({ currentUser }: AttendanceViewProps) {
   const handleSubmitRequest = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser) return;
+    if (currentUser?.approved === false) {
+      alert("สิทธิ์การใช้งานของคุณคือเข้าดูระบบได้เท่านั้น ไม่สามารถยื่นคำขอลาหรือปรับเวลาได้");
+      return;
+    }
 
     const reqId = `REQ-${Date.now().toString().slice(-6)}`;
     const id = `${currentUser.id}_${requestDate}`;

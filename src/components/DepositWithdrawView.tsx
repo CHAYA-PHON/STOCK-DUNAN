@@ -91,6 +91,10 @@ export default function DepositWithdrawView({ currentUser }: DepositWithdrawView
 
   const handleCreateRequest = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (currentUser?.approved === false) {
+      alert("สิทธิ์การใช้งานของคุณคือเข้าดูระบบได้เท่านั้น ไม่สามารถดำเนินการแก้ไขข้อมูลหรือบันทึกใดๆ ได้");
+      return;
+    }
     if (!selectedProduct) {
       alert("กรุณาเลือกสินค้าก่อนยื่นฝาก/เบิก");
       return;

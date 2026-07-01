@@ -248,6 +248,10 @@ export default function StockOutView({ currentUser }: StockOutViewProps) {
   };
 
   const handleSubmitAdjustRequest = async () => {
+    if (currentUser?.approved === false) {
+      alert("สิทธิ์การใช้งานของคุณคือเข้าดูระบบได้เท่านั้น ไม่สามารถดำเนินการแก้ไขข้อมูลหรือบันทึกใดๆ ได้");
+      return;
+    }
     if (!negativeError || !currentUser) return;
 
     try {
@@ -275,6 +279,10 @@ export default function StockOutView({ currentUser }: StockOutViewProps) {
   };
 
   const handleCommitQueue = async () => {
+    if (currentUser?.approved === false) {
+      alert("สิทธิ์การใช้งานของคุณคือเข้าดูระบบได้เท่านั้น ไม่สามารถดำเนินการแก้ไขข้อมูลหรือบันทึกใดๆ ได้");
+      return;
+    }
     if (queue.length === 0) return;
 
     try {

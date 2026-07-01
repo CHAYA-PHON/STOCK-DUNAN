@@ -153,6 +153,10 @@ export default function StockInView({ currentUser }: StockInViewProps) {
   };
 
   const addCustomInType = async () => {
+    if (currentUser?.approved === false) {
+      alert("สิทธิ์การใช้งานของคุณคือเข้าดูระบบได้เท่านั้น ไม่สามารถดำเนินการแก้ไขข้อมูลหรือบันทึกใดๆ ได้");
+      return;
+    }
     if (!newTypeName.trim()) return;
     try {
       const updated = [...inTypes, newTypeName.trim()];
@@ -168,6 +172,10 @@ export default function StockInView({ currentUser }: StockInViewProps) {
 
   const handleAddProductOnFly = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (currentUser?.approved === false) {
+      alert("สิทธิ์การใช้งานของคุณคือเข้าดูระบบได้เท่านั้น ไม่สามารถดำเนินการแก้ไขข้อมูลหรือบันทึกใดๆ ได้");
+      return;
+    }
     if (!newProdCustomer.trim() || !newProdPartNo.trim() || !newProdPartName.trim()) {
       alert("กรุณากรอกข้อมูลดาว (*) ให้ครบถ้วน");
       return;
@@ -261,6 +269,10 @@ export default function StockInView({ currentUser }: StockInViewProps) {
   };
 
   const handleCommitQueue = async () => {
+    if (currentUser?.approved === false) {
+      alert("สิทธิ์การใช้งานของคุณคือเข้าดูระบบได้เท่านั้น ไม่สามารถดำเนินการแก้ไขข้อมูลหรือบันทึกใดๆ ได้");
+      return;
+    }
     if (queue.length === 0) return;
 
     try {

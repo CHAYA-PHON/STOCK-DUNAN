@@ -10,6 +10,9 @@ export interface Employee {
   role: string; // admin, leader, user_production, user_store, user_planning, sales, or custom
   shiftWork: "DAY" | "NIGHT";
   fixedDayShift?: boolean;
+  approved?: boolean;
+  avatarUrl?: string;
+  phone?: string;
 }
 
 export interface Product {

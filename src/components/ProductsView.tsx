@@ -15,6 +15,10 @@ export default function ProductsView() {
   const [pastedText, setPastedText] = useState("");
   const [isImporting, setIsImporting] = useState(false);
 
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 300;
+
   // Single product creation state
   const [showAddSingleModal, setShowAddSingleModal] = useState(false);
   const [newCust, setNewCust] = useState("");
@@ -95,7 +99,7 @@ export default function ProductsView() {
     return unsub;
   }, []);
 
-  // Filter products by customer and fuzzy search
+  // Grouped products
   const customers = ["All", ...Array.from(new Set(products.map((p) => p.customer).filter(Boolean)))];
 
   const filteredProducts = products.filter((prod) => {
@@ -112,8 +116,21 @@ export default function ProductsView() {
     );
   });
 
-  // Grouped products
-  const groupedProducts = filteredProducts.reduce((acc, p) => {
+  // Reset pagination on filter changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, selectedCustomer]);
+
+  const totalItems = filteredProducts.length;
+  const totalPages = Math.ceil(totalItems / itemsPerPage);
+
+  const paginatedProducts = filteredProducts.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  );
+
+  // Grouped products for current page
+  const groupedProducts = paginatedProducts.reduce((acc, p) => {
     const cust = p.customer || "UNKNOWN";
     if (!acc[cust]) acc[cust] = [];
     acc[cust].push(p);
@@ -459,6 +476,54 @@ export default function ProductsView() {
               </div>
             </div>
           ))
+        )}
+
+        {/* Pagination UI Controls */}
+        {totalPages > 1 && (
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-white border border-gray-100 p-4 rounded-2xl shadow-xs mt-6">
+            <div className="text-xs font-semibold text-gray-500">
+              แสดงรายการ {((currentPage - 1) * itemsPerPage) + 1} - {Math.min(currentPage * itemsPerPage, totalItems)} จากทั้งหมด {totalItems.toLocaleString()} รายการ (หน้าละ {itemsPerPage} รายการ)
+            </div>
+            <div className="flex items-center gap-1.5">
+              <button
+                disabled={currentPage === 1}
+                onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-bold hover:bg-gray-50 disabled:opacity-50 disabled:hover:bg-transparent transition cursor-pointer"
+              >
+                ก่อนหน้า
+              </button>
+              
+              {Array.from({ length: Math.min(5, totalPages) }, (_, idx) => {
+                let pageNum = currentPage - 2 + idx;
+                if (currentPage <= 2) pageNum = idx + 1;
+                else if (currentPage >= totalPages - 2) pageNum = totalPages - 4 + idx;
+                
+                if (pageNum < 1 || pageNum > totalPages) return null;
+                
+                return (
+                  <button
+                    key={pageNum}
+                    onClick={() => setCurrentPage(pageNum)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                      currentPage === pageNum
+                        ? "bg-red-600 text-white"
+                        : "border border-gray-200 hover:bg-gray-50"
+                    }`}
+                  >
+                    {pageNum}
+                  </button>
+                );
+              })}
+              
+              <button
+                disabled={currentPage === totalPages}
+                onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-bold hover:bg-gray-50 disabled:opacity-50 disabled:hover:bg-transparent transition cursor-pointer"
+              >
+                ถัดไป
+              </button>
+            </div>
+          </div>
         )}
       </div>
 
