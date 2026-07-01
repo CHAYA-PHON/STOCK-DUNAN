@@ -1,0 +1,11 @@
+export { default as QRScannerModal } from "./QRScannerModal";
+export { default as DashboardView } from "./DashboardView";
+export { default as StockInView } from "./StockInView";
+export { default as StockOutView } from "./StockOutView";
+export { default as ProductsView } from "./ProductsView";
+export { default as EmployeesView } from "./EmployeesView";
+export { default as AdjustView } from "./AdjustView";
+export { default as DepositWithdrawView } from "./DepositWithdrawView";
+export { default as ReportsView } from "./ReportsView";
+export { default as SettingsView } from "./SettingsView";
+export { default as AttendanceView } from "./AttendanceView";

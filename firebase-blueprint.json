@@ -1,0 +1,168 @@
+{
+  "entities": {
+    "Employee": {
+      "title": "Employee",
+      "description": "Employee profiles and credentials",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "8-digit Employee ID" },
+        "pin": { "type": "string", "description": "6-digit secure PIN" },
+        "name": { "type": "string" },
+        "lastName": { "type": "string" },
+        "position": { "type": "string" },
+        "jobPosition": { "type": "string" },
+        "department": { "type": "string" },
+        "status": { "type": "string", "enum": ["Active", "Inactive"] },
+        "role": { "type": "string" },
+        "shiftWork": { "type": "string", "enum": ["DAY", "NIGHT"] }
+      },
+      "required": ["id", "pin", "name", "lastName", "status", "role"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Inventory product master items",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Composite Customer-PartNo" },
+        "sapNo": { "type": "string" },
+        "zone": { "type": "string" },
+        "customer": { "type": "string" },
+        "partNo": { "type": "string" },
+        "partName": { "type": "string" },
+        "fullBox": { "type": "number" },
+        "packageType": { "type": "string" },
+        "openingStock": { "type": "number" },
+        "receivedTotal": { "type": "number" },
+        "shippedTotal": { "type": "number" },
+        "stock": { "type": "number" }
+      },
+      "required": ["id", "partNo", "partName", "stock"]
+    },
+    "InventoryTransaction": {
+      "title": "InventoryTransaction",
+      "description": "Log of inventory movements (Stock In / Stock Out)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "labelId": { "type": "string" },
+        "partNo": { "type": "string" },
+        "partName": { "type": "string" },
+        "customer": { "type": "string" },
+        "type": { "type": "string", "enum": ["in", "out"] },
+        "subType": { "type": "string" },
+        "qty": { "type": "number" },
+        "location": { "type": "string" },
+        "shift": { "type": "string" },
+        "operatorId": { "type": "string" },
+        "operatorName": { "type": "string" }
+      },
+      "required": ["id", "labelId", "partNo", "type", "qty", "operatorId"]
+    },
+    "LocationItem": {
+      "title": "LocationItem",
+      "description": "Stock location master values",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" }
+      },
+      "required": ["id", "name"]
+    },
+    "AdjustRequest": {
+      "title": "AdjustRequest",
+      "description": "Inventory quantity correction adjustment requests",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "partNo": { "type": "string" },
+        "partName": { "type": "string" },
+        "currentStock": { "type": "number" },
+        "actualStock": { "type": "number" },
+        "difference": { "type": "number" },
+        "requesterId": { "type": "string" },
+        "requesterName": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] }
+      },
+      "required": ["id", "partNo", "currentStock", "actualStock", "difference", "requesterId", "status"]
+    },
+    "DepositWithdrawal": {
+      "title": "DepositWithdrawal",
+      "description": "Separate parts deposit and withdrawal logs",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "partNo": { "type": "string" },
+        "partName": { "type": "string" },
+        "customer": { "type": "string" },
+        "qty": { "type": "number" },
+        "type": { "type": "string", "enum": ["deposit", "withdraw"] },
+        "status": { "type": "string", "enum": ["pending", "verified"] },
+        "operatorId": { "type": "string" },
+        "operatorName": { "type": "string" }
+      },
+      "required": ["id", "partNo", "qty", "type", "status", "operatorId"]
+    },
+    "TimeAttendance": {
+      "title": "TimeAttendance",
+      "description": "Staff work check-in, check-out, and attendance requests",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "empId": { "type": "string" },
+        "empName": { "type": "string" },
+        "date": { "type": "string" },
+        "checkIn": { "type": "string" },
+        "checkOut": { "type": "string" },
+        "shift": { "type": "string", "enum": ["DAY", "NIGHT"] },
+        "workHours": { "type": "number" },
+        "otHours": { "type": "number" }
+      },
+      "required": ["id", "empId", "date", "shift"]
+    },
+    "SystemSettings": {
+      "title": "SystemSettings",
+      "description": "General system options like departments and adjustment settings",
+      "type": "object",
+      "properties": {
+        "departments": { "type": "array", "items": { "type": "string" } },
+        "roles": { "type": "array", "items": { "type": "string" } },
+        "inTypes": { "type": "array", "items": { "type": "string" } },
+        "outTypes": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  },
+  "firestore": {
+    "/employees/{employeeId}": {
+      "schema": "Employee",
+      "description": "Collection of employee accounts"
+    },
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Master list of products and current stock balances"
+    },
+    "/inventory_log/{logId}": {
+      "schema": "InventoryTransaction",
+      "description": "History of stock in and stock out logs"
+    },
+    "/locations/{locationId}": {
+      "schema": "LocationItem",
+      "description": "Stored warehouses or shelf locations"
+    },
+    "/adjust_requests/{requestId}": {
+      "schema": "AdjustRequest",
+      "description": "Adjustments requested by personnel"
+    },
+    "/deposits_withdrawals/{id}": {
+      "schema": "DepositWithdrawal",
+      "description": "Saves transactions of parts deposits and withdrawals"
+    },
+    "/time_attendance/{id}": {
+      "schema": "TimeAttendance",
+      "description": "Saves employee daily time tracking"
+    },
+    "/settings/{settingId}": {
+      "schema": "SystemSettings",
+      "description": "General settings configurations"
+    }
+  }
+}
