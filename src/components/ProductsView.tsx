@@ -5,7 +5,7 @@ import { Product } from "../types";
 import { fuzzySearch } from "../utils/fuzzy";
 import { getSafeProductId } from "../utils/productUtils";
 import * as XLSX from "xlsx";
-import { Search, FileSpreadsheet, Package, Upload, HelpCircle, Edit3, Save, Check, Clipboard, X } from "lucide-react";
+import { Search, FileSpreadsheet, Package, Upload, HelpCircle, Edit3, Save, Check, Clipboard, X, PlusCircle } from "lucide-react";
 
 export default function ProductsView() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -15,11 +15,75 @@ export default function ProductsView() {
   const [pastedText, setPastedText] = useState("");
   const [isImporting, setIsImporting] = useState(false);
 
+  // Single product creation state
+  const [showAddSingleModal, setShowAddSingleModal] = useState(false);
+  const [newCust, setNewCust] = useState("");
+  const [newPartNo, setNewPartNo] = useState("");
+  const [newPartName, setNewPartName] = useState("");
+  const [newSapNo, setNewSapNo] = useState("-");
+  const [newZone, setNewZone] = useState("-");
+  const [newFullBox, setNewFullBox] = useState<number>(0);
+  const [newPkgType, setNewPkgType] = useState("BOX");
+  const [newOpeningStock, setNewOpeningStock] = useState<number>(0);
+
   // Inline edit state for box size fallback
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingBoxValue, setEditingBoxValue] = useState<number>(0);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleCreateSingleProduct = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCust.trim() || !newPartNo.trim()) {
+      alert("กรุณากรอกข้อมูลลูกค้าและพาร์ทสินค้า");
+      return;
+    }
+
+    const customerVal = newCust.trim().toUpperCase();
+    const partNoVal = newPartNo.trim();
+    const compositeId = getSafeProductId(customerVal, partNoVal);
+
+    // Check if product already exists
+    const exists = products.some((p) => p.id === compositeId);
+    if (exists) {
+      alert(`สินค้าพาร์ท ${partNoVal} ของลูกค้า ${customerVal} มีอยู่ในระบบแล้ว`);
+      return;
+    }
+
+    try {
+      const productDoc: Product = {
+        id: compositeId,
+        customer: customerVal,
+        partNo: partNoVal,
+        partName: newPartName.trim() || `${customerVal} ${partNoVal}`,
+        sapNo: newSapNo.trim(),
+        zone: newZone.trim(),
+        fullBox: newFullBox,
+        packageType: newPkgType.trim() || "BOX",
+        openingStock: newOpeningStock,
+        receivedTotal: 0,
+        shippedTotal: 0,
+        stock: newOpeningStock,
+      };
+
+      await setDoc(doc(db, "products", compositeId), productDoc);
+      alert("เพิ่มสินค้าเดี่ยวลงทะเบียนข้อมูลสินค้าสำเร็จ!");
+      
+      // Reset & close modal
+      setShowAddSingleModal(false);
+      setNewCust("");
+      setNewPartNo("");
+      setNewPartName("");
+      setNewSapNo("-");
+      setNewZone("-");
+      setNewFullBox(0);
+      setNewPkgType("BOX");
+      setNewOpeningStock(0);
+    } catch (err) {
+      console.error(err);
+      alert("เกิดข้อผิดพลาดในการสร้างสินค้า");
+    }
+  };
 
   // Load products in real-time
   useEffect(() => {
@@ -245,7 +309,7 @@ export default function ProductsView() {
           </p>
         </div>
 
-        <div className="flex gap-2.5 self-stretch md:self-auto">
+        <div className="flex flex-wrap gap-2.5 self-stretch md:self-auto">
           <input
             type="file"
             ref={fileInputRef}
@@ -254,15 +318,22 @@ export default function ProductsView() {
             className="hidden"
           />
           <button
+            onClick={() => setShowAddSingleModal(true)}
+            className="bg-red-600 hover:bg-red-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 transition cursor-pointer shadow-xs select-none"
+          >
+            <PlusCircle className="w-4 h-4 text-white" />
+            <span>เพิ่มสินค้าเดี่ยว</span>
+          </button>
+          <button
             onClick={() => fileInputRef.current?.click()}
-            className="bg-slate-100 hover:bg-slate-200 text-slate-800 px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 border border-slate-200 transition cursor-pointer shadow-xs"
+            className="bg-slate-100 hover:bg-slate-200 text-slate-800 px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 border border-slate-200 transition cursor-pointer shadow-xs select-none"
           >
             <Upload className="w-4 h-4 text-red-600" />
             <span>อิมพอร์ต Excel / CSV</span>
           </button>
           <button
             onClick={() => setShowPasteModal(true)}
-            className="bg-black hover:bg-slate-800 text-white px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 transition cursor-pointer shadow-xs"
+            className="bg-black hover:bg-slate-800 text-white px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 transition cursor-pointer shadow-xs select-none"
           >
             <Clipboard className="w-4 h-4 text-red-500 animate-pulse" />
             <span>วางข้อมูลตาราง (Paste Table)</span>
@@ -466,6 +537,144 @@ export default function ProductsView() {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Add Single Product Modal */}
+      {showAddSingleModal && (
+        <div className="fixed inset-0 z-[250] bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm">
+          <form onSubmit={handleCreateSingleProduct} className="bg-white w-full max-w-lg rounded-3xl overflow-hidden shadow-2xl border border-slate-100 flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-200">
+            {/* Modal Header */}
+            <div className="bg-gradient-to-r from-red-600 to-red-700 p-5 text-white flex justify-between items-center">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center">
+                  <PlusCircle className="w-4 h-4 text-white" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm">เพิ่มข้อมูลสินค้าเดี่ยว (Add Single Product)</h3>
+                  <p className="text-[10px] text-red-100">กรอกข้อมูลรายละเอียดของพาร์ทสินค้าใหม่เพื่อเริ่มขึ้นทะเบียนข้อมูล</p>
+                </div>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setShowAddSingleModal(false)} 
+                className="hover:bg-red-800 p-1.5 rounded-full transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto space-y-4 text-xs text-slate-700">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 block">ลูกค้า (Customer) *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="เช่น Haier, Toshiba, Sharp"
+                    value={newCust}
+                    onChange={(e) => setNewCust(e.target.value)}
+                    className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-red-500 bg-white"
+                  />
+                </div>
+                
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 block">รหัสพาร์ทสินค้า (Part No) *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="เช่น 0010724702N"
+                    value={newPartNo}
+                    onChange={(e) => setNewPartNo(e.target.value)}
+                    className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-red-500 bg-white"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-600 block">ชื่อพาร์ท / รายการสินค้า (Part Name)</label>
+                <input
+                  type="text"
+                  placeholder="หากเว้นว่าง ระบบจะนำชื่อลูกค้าและรหัสสินค้ามาตั้งชื่อให้"
+                  value={newPartName}
+                  onChange={(e) => setNewPartName(e.target.value)}
+                  className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-red-500 bg-white"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 block">รหัส SAP (SAP No)</label>
+                  <input
+                    type="text"
+                    value={newSapNo}
+                    onChange={(e) => setNewSapNo(e.target.value)}
+                    className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-red-500 bg-white"
+                  />
+                </div>
+                
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 block">โซนการจัดเก็บ (Zone)</label>
+                  <input
+                    type="text"
+                    value={newZone}
+                    onChange={(e) => setNewZone(e.target.value)}
+                    className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-red-500 bg-white"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 block">ความจุต่อกล่อง (Full Box)</label>
+                  <input
+                    type="number"
+                    value={newFullBox}
+                    onChange={(e) => setNewFullBox(Number(e.target.value))}
+                    className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-red-500 bg-white"
+                  />
+                </div>
+                
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 block">ประเภทกล่อง</label>
+                  <input
+                    type="text"
+                    value={newPkgType}
+                    onChange={(e) => setNewPkgType(e.target.value)}
+                    className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-red-500 bg-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 block">ยอดยกมา (Opening Stock)</label>
+                  <input
+                    type="number"
+                    value={newOpeningStock}
+                    onChange={(e) => setNewOpeningStock(Number(e.target.value))}
+                    className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-red-500 bg-white"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="bg-slate-50 px-6 py-4 border-t border-slate-100 flex justify-end gap-2 text-xs font-semibold">
+              <button
+                type="button"
+                onClick={() => setShowAddSingleModal(false)}
+                className="px-4 py-2 border border-slate-200 hover:bg-slate-100 text-slate-600 rounded-xl transition cursor-pointer"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="submit"
+                className="bg-red-600 hover:bg-red-700 text-white font-bold px-5 py-2 rounded-xl transition cursor-pointer shadow-xs"
+              >
+                บันทึกขึ้นทะเบียนสินค้า
+              </button>
+            </div>
+          </form>
         </div>
       )}
     </div>

@@ -258,12 +258,29 @@ export default function AttendanceView({ currentUser }: AttendanceViewProps) {
     }
   };
 
+  const handleToggleFixedDayShift = async (empId: string, currentVal: boolean) => {
+    try {
+      const isNowFixed = !currentVal;
+      await updateDoc(doc(db, "employees", empId), { 
+        fixedDayShift: isNowFixed,
+        ...(isNowFixed ? { shiftWork: "DAY" } : {})
+      });
+      alert(`อัปเดตสถานะ "ทำกะเช้าตลอด" สำเร็จแล้ว`);
+    } catch (err) {
+      console.error(err);
+      alert("เกิดข้อผิดพลาดในการบันทึกข้อมูล");
+    }
+  };
+
   // Perform immediate swap of shifts and roll nextDate forward
   const handleTriggerRotation = async () => {
-    if (!confirm("คุณต้องการสลับกะพนักงานทุกคนในระบบทันทีใช่หรือไม่? (กะกลางวัน ↔ กะกลางคืน)")) return;
+    if (!confirm("คุณต้องการสลับกะพนักงานทุกคนในระบบทันทีใช่หรือไม่? (พนักงานที่เปิดกะเช้าตลอดจะถูกล็อกไว้ที่กะกลางวัน)")) return;
     try {
-      // 1. Swap shifts for all employees
+      // 1. Swap shifts for all employees (skipping fixedDayShift ones)
       const promises = employees.map((emp) => {
+        if (emp.fixedDayShift) {
+          return updateDoc(doc(db, "employees", emp.id), { shiftWork: "DAY" });
+        }
         const newShift = emp.shiftWork === "NIGHT" ? "DAY" : "NIGHT";
         return updateDoc(doc(db, "employees", emp.id), { shiftWork: newShift });
       });
@@ -284,7 +301,7 @@ export default function AttendanceView({ currentUser }: AttendanceViewProps) {
       });
       
       setRotationSettings(prev => ({ ...prev, nextRotationDate: nextDateStr }));
-      alert(`สลับกะพนักงานทั้งหมดเรียบร้อยแล้ว!\nระบบทำการเลื่อนกำหนดเปลี่ยนกะรอบถัดไปเป็นวันที่: ${nextDateStr}`);
+      alert(`สลับกะพนักงานทั้งหมดเรียบร้อยแล้ว! (ยกเว้นผู้ที่ถูกล็อก "กะเช้าตลอด")\nระบบเลื่อนวันเปลี่ยนกะรอบถัดไปเป็น: ${nextDateStr}`);
     } catch (err) {
       console.error(err);
       alert("เกิดข้อผิดพลาดในการสลับกะพนักงาน");
@@ -633,6 +650,7 @@ export default function AttendanceView({ currentUser }: AttendanceViewProps) {
                       <tr>
                         <th className="p-3">รหัส / ชื่อพนักงาน</th>
                         <th className="p-3">แผนก</th>
+                        <th className="p-3 text-center">ตั้งค่ากะเช้าตลอด (Always Day)</th>
                         <th className="p-3 text-center">จัดกะงานปัจจุบัน</th>
                       </tr>
                     </thead>
@@ -645,14 +663,28 @@ export default function AttendanceView({ currentUser }: AttendanceViewProps) {
                           </td>
                           <td className="p-3 font-medium text-slate-600">{emp.department}</td>
                           <td className="p-3 text-center">
+                            <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={!!emp.fixedDayShift}
+                                onChange={() => handleToggleFixedDayShift(emp.id, !!emp.fixedDayShift)}
+                                className="rounded text-red-600 focus:ring-red-500 w-4 h-4 cursor-pointer"
+                              />
+                              <span className={`text-[10px] font-bold ${emp.fixedDayShift ? "text-green-700 bg-green-50 px-1.5 py-0.5 rounded border border-green-200" : "text-gray-400"}`}>
+                                {emp.fixedDayShift ? "ทำเช้าตลอด" : "สลับกะปกติ"}
+                              </span>
+                            </label>
+                          </td>
+                          <td className="p-3 text-center">
                             <select
                               value={emp.shiftWork || "DAY"}
+                              disabled={!!emp.fixedDayShift}
                               onChange={(e) => handleScheduleShift(emp.id, e.target.value as any)}
                               className={`border rounded-lg px-2.5 py-1 text-xs font-bold focus:outline-none ${
                                 emp.shiftWork === "NIGHT" 
                                   ? "bg-slate-900 text-amber-400 border-slate-800" 
                                   : "bg-amber-50/50 text-amber-800 border-amber-200"
-                              }`}
+                              } ${emp.fixedDayShift ? "opacity-75 cursor-not-allowed" : "cursor-pointer"}`}
                             >
                               <option value="DAY">☀ DAY (กะกลางวัน)</option>
                               <option value="NIGHT">🌙 NIGHT (กะกลางคืน)</option>

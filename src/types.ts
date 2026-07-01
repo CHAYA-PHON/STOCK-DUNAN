@@ -9,6 +9,7 @@ export interface Employee {
   status: "Active" | "Inactive";
   role: string; // admin, leader, user_production, user_store, user_planning, sales, or custom
   shiftWork: "DAY" | "NIGHT";
+  fixedDayShift?: boolean;
 }
 
 export interface Product {

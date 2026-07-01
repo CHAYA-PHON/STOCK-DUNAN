@@ -352,17 +352,21 @@ export default function StockOutView({ currentUser }: StockOutViewProps) {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-semibold text-gray-600">Location ต้นทาง</label>
-                <select
+                <input
+                  type="text"
+                  list="locations-datalist"
                   value={location}
                   onChange={(e) => setLocation(e.target.value)}
-                  className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
-                >
+                  placeholder="พิมพ์ค้นหา/เลือกสถานที่..."
+                  className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-red-500 bg-white"
+                />
+                <datalist id="locations-datalist">
                   {locations.map((loc) => (
                     <option key={loc.id} value={loc.name}>
                       {loc.name}
                     </option>
                   ))}
-                </select>
+                </datalist>
               </div>
 
               <div>

@@ -23,6 +23,7 @@ export default function DepositWithdrawView({ currentUser }: DepositWithdrawView
   // Edit record state
   const [editingRecord, setEditingRecord] = useState<DepositWithdrawal | null>(null);
   const [editingQty, setEditingQty] = useState<number>(0);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
   const isStorekeeper = currentUser?.role === "user_store" || currentUser?.role === "admin" || currentUser?.role === "leader";
 
@@ -163,13 +164,11 @@ export default function DepositWithdrawView({ currentUser }: DepositWithdrawView
   };
 
   const handleDelete = async (id: string) => {
-    if (confirm("คุณต้องการลบรายการฝาก/เบิกนี้ออกถาวรหรือไม่?")) {
-      try {
-        await deleteDoc(doc(db, "deposits_withdrawals", id));
-        alert("ลบข้อมูลสำเร็จ");
-      } catch (err) {
-        console.error(err);
-      }
+    try {
+      await deleteDoc(doc(db, "deposits_withdrawals", id));
+      alert("ลบข้อมูลสำเร็จ");
+    } catch (err) {
+      console.error(err);
     }
   };
 
@@ -373,8 +372,8 @@ export default function DepositWithdrawView({ currentUser }: DepositWithdrawView
                             <Edit className="w-3.5 h-3.5" />
                           </button>
                           <button
-                            onClick={() => handleDelete(rec.id)}
-                            className="text-gray-400 hover:text-red-600 p-1 rounded-md"
+                            onClick={() => setDeleteConfirmId(rec.id)}
+                            className="text-gray-400 hover:text-red-600 p-1 rounded-md cursor-pointer"
                             title="ลบรายการ"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -384,6 +383,123 @@ export default function DepositWithdrawView({ currentUser }: DepositWithdrawView
                     </tr>
                   ))
                 )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {/* DEPOSIT INVENTORY REPORT PANEL */}
+      <div className="bg-slate-950 text-white p-6 rounded-3xl border border-slate-800 shadow-2xl space-y-6">
+        <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 border-b border-slate-800 pb-5">
+          <div>
+            <div className="inline-flex items-center gap-2 bg-red-600/10 text-red-500 font-bold text-[10px] uppercase px-2.5 py-1 rounded-full border border-red-500/20 mb-2">
+              <span>Real-time Ledger</span>
+            </div>
+            <h3 className="text-lg font-bold tracking-tight">รายงานยอดชิ้นงานฝากค้างและ Rework คงเหลือ (Deposit & Rework Inventory Report)</h3>
+            <p className="text-xs text-slate-400 mt-1">สรุปข้อมูลเฉพาะชิ้นงานที่ยังฝากค้างอยู่ในคลังแยกส่วน ณ ปัจจุบัน</p>
+          </div>
+
+          <div className="flex items-center gap-2.5">
+            <button
+              type="button"
+              onClick={() => {
+                const activeDepositsReport = products
+                  .map((prod) => {
+                    const balance = getVerifiedDepositBalance(prod.partNo);
+                    return { ...prod, depositBalance: balance };
+                  })
+                  .filter((p) => p.depositBalance > 0);
+
+                const header = "ลำดับ\tลูกค้า (Customer)\tรหัสสินค้า (Part No)\tชื่อสินค้า (Part Name)\tโซนเก็บ (Zone)\tยอดฝากคงค้าง (Qty)\n";
+                const rows = activeDepositsReport.map((p, idx) => 
+                  `${idx + 1}\t${p.customer}\t${p.partNo}\t${p.partName}\t${p.zone || '-'}\t${p.depositBalance}`
+                ).join("\n");
+                
+                const clipboardText = header + rows;
+                navigator.clipboard.writeText(clipboardText);
+                alert("คัดลอกรายงานยอดฝากคงค้างไปยังคลิปบอร์ดแล้ว! สามารถวางลงใน Excel ได้ทันที");
+              }}
+              className="bg-slate-800 hover:bg-slate-700 text-slate-200 px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 border border-slate-700 cursor-pointer select-none"
+            >
+              <span>คัดลอกรายงานเพื่อ Excel</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Dashboard summary cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="bg-slate-900/80 border border-slate-800 p-5 rounded-2xl flex items-center justify-between">
+            <div>
+              <p className="text-slate-400 text-[11px] font-bold">จำนวนประเภทพาร์ทที่มีงานฝากค้าง</p>
+              <h4 className="text-2xl font-black mt-1 text-red-500">
+                {products.filter(p => getVerifiedDepositBalance(p.partNo) > 0).length.toLocaleString()} <span className="text-xs text-slate-400 font-normal">รายการ</span>
+              </h4>
+            </div>
+            <div className="w-10 h-10 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center">
+              <span className="text-xl">📦</span>
+            </div>
+          </div>
+
+          <div className="bg-slate-900/80 border border-slate-800 p-5 rounded-2xl flex items-center justify-between">
+            <div>
+              <p className="text-slate-400 text-[11px] font-bold">ยอดจำนวนชิ้นงานฝากคงค้างสะสมทั้งหมด</p>
+              <h4 className="text-2xl font-black mt-1 text-emerald-400">
+                {products.reduce((sum, p) => sum + getVerifiedDepositBalance(p.partNo), 0).toLocaleString()} <span className="text-xs text-slate-400 font-normal">ชิ้น</span>
+              </h4>
+            </div>
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
+              <span className="text-xl">📊</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Details list */}
+        <div className="bg-slate-900 rounded-2xl border border-slate-800/80 overflow-hidden">
+          <div className="overflow-x-auto max-h-[300px] overflow-y-auto">
+            <table className="w-full text-xs text-left text-slate-300">
+              <thead className="bg-slate-950/80 text-slate-400 font-bold border-b border-slate-800 sticky top-0">
+                <tr>
+                  <th className="p-3">ลูกค้า</th>
+                  <th className="p-3">รหัสสินค้า (Part No)</th>
+                  <th className="p-3">ชื่อสินค้า (Part Name)</th>
+                  <th className="p-3">โซนเก็บ</th>
+                  <th className="p-3 text-right">ยอดฝากคงค้างปัจจุบัน</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(() => {
+                  const activeDepositsReport = products
+                    .map((prod) => {
+                      const balance = getVerifiedDepositBalance(prod.partNo);
+                      return { ...prod, depositBalance: balance };
+                    })
+                    .filter((p) => p.depositBalance > 0);
+
+                  if (activeDepositsReport.length === 0) {
+                    return (
+                      <tr>
+                        <td colSpan={5} className="p-8 text-center text-slate-500 italic">
+                          ไม่มีชิ้นงานฝากคงค้างในระบบ ณ ปัจจุบัน
+                        </td>
+                      </tr>
+                    );
+                  }
+
+                  return activeDepositsReport.map((item) => (
+                    <tr key={item.id} className="border-b last:border-0 border-slate-800/50 hover:bg-slate-800/30 transition">
+                      <td className="p-3">
+                        <span className="font-bold text-slate-100">{item.customer}</span>
+                      </td>
+                      <td className="p-3 font-mono font-bold text-red-400">{item.partNo}</td>
+                      <td className="p-3 text-slate-400 truncate max-w-[200px]">{item.partName}</td>
+                      <td className="p-3 font-mono text-slate-400">{item.zone || "-"}</td>
+                      <td className="p-3 text-right font-black text-emerald-400 text-sm">
+                        {item.depositBalance.toLocaleString()} <span className="text-[10px] text-slate-500 font-normal">ชิ้น</span>
+                      </td>
+                    </tr>
+                  ));
+                })()}
               </tbody>
             </table>
           </div>
@@ -414,17 +530,52 @@ export default function DepositWithdrawView({ currentUser }: DepositWithdrawView
               <div className="flex gap-2 pt-2 text-xs">
                 <button
                   onClick={() => setEditingRecord(null)}
-                  className="flex-1 border py-2 rounded-xl font-semibold"
+                  className="flex-1 border py-2 rounded-xl font-semibold cursor-pointer"
                 >
                   ยกเลิก
                 </button>
                 <button
                   onClick={handleSaveEdit}
-                  className="flex-1 bg-red-600 text-white py-2 rounded-xl font-bold hover:bg-red-700"
+                  className="flex-1 bg-red-600 text-white py-2 rounded-xl font-bold hover:bg-red-700 cursor-pointer"
                 >
                   บันทึกยอดแก้ไข
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Delete Confirmation Modal */}
+      {deleteConfirmId && (
+        <div className="fixed inset-0 z-[130] bg-black/60 flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl border border-gray-100 p-6 space-y-4">
+            <div className="text-center space-y-2">
+              <div className="w-12 h-12 rounded-full bg-red-50 flex items-center justify-center text-red-600 mx-auto">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <h3 className="font-bold text-gray-900 text-sm">ยืนยันการลบรายการฝาก/เบิก?</h3>
+              <p className="text-xs text-gray-500">
+                คุณแน่ใจหรือไม่ว่าต้องการลบรายการธุรกรรมนี้ออกอย่างถาวร?
+              </p>
+            </div>
+            <div className="flex justify-center gap-2 text-xs pt-2">
+              <button
+                onClick={() => setDeleteConfirmId(null)}
+                className="px-4 py-2 border rounded-xl hover:bg-gray-100 font-semibold cursor-pointer"
+              >
+                ยกเลิก
+              </button>
+              <button
+                onClick={async () => {
+                  const id = deleteConfirmId;
+                  setDeleteConfirmId(null);
+                  await handleDelete(id);
+                }}
+                className="px-5 py-2 bg-red-600 text-white rounded-xl hover:bg-red-700 font-bold cursor-pointer"
+              >
+                ยืนยันลบรายการ
+              </button>
             </div>
           </div>
         </div>

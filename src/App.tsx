@@ -421,7 +421,7 @@ export default function App() {
               }`}
             >
               <ArrowDownLeft className="w-4 h-4 shrink-0" />
-              <span>บันทึกรับเข้าสินค้า (In)</span>
+              <span>รับเข้า</span>
             </button>
 
             <button
@@ -431,37 +431,7 @@ export default function App() {
               }`}
             >
               <ArrowUpRight className="w-4 h-4 shrink-0" />
-              <span>โอนออกสินค้า (Out)</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab("products_master")}
-              className={`w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2.5 transition ${
-                activeTab === "products_master" ? "bg-red-600 text-white shadow-lg shadow-red-600/15" : "hover:bg-white/5 hover:text-white"
-              }`}
-            >
-              <Package className="w-4 h-4 shrink-0" />
-              <span>ทะเบียนสินค้า (Master)</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab("stock_adjust")}
-              className={`w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2.5 transition ${
-                activeTab === "stock_adjust" ? "bg-red-600 text-white shadow-lg shadow-red-600/15" : "hover:bg-white/5 hover:text-white"
-              }`}
-            >
-              <Sliders className="w-4 h-4 shrink-0" />
-              <span>ตรวจนับปรับสต๊อก (Adjust)</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab("deposit_withdraw")}
-              className={`w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2.5 transition ${
-                activeTab === "deposit_withdraw" ? "bg-red-600 text-white shadow-lg shadow-red-600/15" : "hover:bg-white/5 hover:text-white"
-              }`}
-            >
-              <Database className="w-4 h-4 shrink-0" />
-              <span>ฝากและเบิกอะไหล่แยก</span>
+              <span>โอนออก</span>
             </button>
 
             <button
@@ -471,7 +441,37 @@ export default function App() {
               }`}
             >
               <Printer className="w-4 h-4 shrink-0" />
-              <span>รายงานและพิมพ์ใบโอนย้าย</span>
+              <span>พิมพ์ใบโอน</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab("deposit_withdraw")}
+              className={`w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2.5 transition ${
+                activeTab === "deposit_withdraw" ? "bg-red-600 text-white shadow-lg shadow-red-600/15" : "hover:bg-white/5 hover:text-white"
+              }`}
+            >
+              <Database className="w-4 h-4 shrink-0" />
+              <span>ฝาก/เบิก</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab("stock_adjust")}
+              className={`w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2.5 transition ${
+                activeTab === "stock_adjust" ? "bg-red-600 text-white shadow-lg shadow-red-600/15" : "hover:bg-white/5 hover:text-white"
+              }`}
+            >
+              <Sliders className="w-4 h-4 shrink-0" />
+              <span>ปรับสต๊อก</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab("products_master")}
+              className={`w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2.5 transition ${
+                activeTab === "products_master" ? "bg-red-600 text-white shadow-lg shadow-red-600/15" : "hover:bg-white/5 hover:text-white"
+              }`}
+            >
+              <Package className="w-4 h-4 shrink-0" />
+              <span>สินค้า</span>
             </button>
 
             <div className="pt-3 pb-1 border-t border-white/5 my-2" />

@@ -1,9 +1,11 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { collection, onSnapshot, doc, setDoc, updateDoc, writeBatch } from "firebase/firestore";
 import { db } from "../firebase";
 import { Product, Employee, AdjustRequest } from "../types";
 import { fuzzySearch } from "../utils/fuzzy";
-import { Search, AlertCircle, Clock, Check, X, ShieldAlert, Edit } from "lucide-react";
+import { getSafeProductId } from "../utils/productUtils";
+import * as XLSX from "xlsx";
+import { Search, AlertCircle, Clock, Check, X, ShieldAlert, Edit, Upload, Clipboard, FileSpreadsheet, Sparkles } from "lucide-react";
 
 interface AdjustViewProps {
   currentUser: Employee | null;
@@ -28,6 +30,225 @@ export default function AdjustView({ currentUser }: AdjustViewProps) {
 
   // Authorization checks
   const isApprover = currentUser?.role === "admin" || currentUser?.role === "leader";
+
+  // EOM states
+  const [showEomPanel, setShowEomPanel] = useState(false);
+  const [showPasteModal, setShowPasteModal] = useState(false);
+  const [pastedText, setPastedText] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleEomImportExcel = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const workbook = XLSX.read(bstr, { type: "binary" });
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        const rawRows = XLSX.utils.sheet_to_json<any>(worksheet);
+
+        let countUpdated = 0;
+        let countNotFound = 0;
+        const batch = writeBatch(db);
+
+        for (const row of rawRows) {
+          const rowKeys = Object.keys(row);
+          const findVal = (possibleKeys: string[], defaultVal: any) => {
+            const matchedKey = rowKeys.find(rk => 
+              possibleKeys.includes(rk.toLowerCase().trim().replace(/[\s_-]/g, ""))
+            );
+            return matchedKey !== undefined ? row[matchedKey] : defaultVal;
+          };
+
+          const partNo = String(findVal(["partno", "part", "รหัสสินค้า", "พาร์ท"], "")).trim();
+          const customer = String(findVal(["customer", "ลูกค้า"], "")).trim().toUpperCase();
+          const countVal = Number(findVal(["actualstock", "physicalcount", "stock", "count", "จำนวนที่นับได้", "นับได้", "ยอดนับจริง"], null));
+
+          if (!partNo || !customer || countVal === null || isNaN(countVal)) {
+            continue;
+          }
+
+          const prodId = getSafeProductId(customer, partNo);
+          const match = products.find(p => p.id === prodId);
+
+          if (match) {
+            const prodRef = doc(db, "products", prodId);
+            batch.update(prodRef, {
+              stock: countVal,
+              openingStock: countVal,
+              receivedTotal: 0,
+              shippedTotal: 0
+            });
+
+            // Log to adjust_requests as an auto-approved EOM adjustment
+            const reqId = `REQ-EOM-${Date.now().toString().slice(-4)}-${countUpdated}`;
+            const diff = countVal - (match.stock || 0);
+            const reqRef = doc(db, "adjust_requests", reqId);
+            batch.set(reqRef, {
+              id: reqId,
+              partNo: match.partNo,
+              partName: match.partName,
+              currentStock: match.stock || 0,
+              actualStock: countVal,
+              difference: diff,
+              requesterId: currentUser?.id || "00000000",
+              requesterName: currentUser ? `${currentUser.name} ${currentUser.lastName}` : "System Operator",
+              timestamp: new Date(),
+              status: "approved",
+              approvedBy: currentUser ? `${currentUser.name} ${currentUser.lastName} (EOM Batch)` : "Supervisor (EOM Batch)",
+              approvedTimestamp: new Date()
+            });
+
+            // Log to inventory_log
+            const logRef = doc(collection(db, "inventory_log"));
+            batch.set(logRef, {
+              labelId: `ADJ-EOM-${reqId.slice(-4)}`,
+              partNo: match.partNo,
+              partName: match.partName,
+              customer: match.customer,
+              type: diff >= 0 ? "in" : "out",
+              subType: "ตรวจนับสต๊อกสิ้นเดือนประจำเดือน (End of Month Count)",
+              qty: Math.abs(diff),
+              location: "ZONE-ADJ-EOM",
+              shift: "DAY",
+              operatorId: currentUser?.id || "00000000",
+              operatorName: currentUser ? `${currentUser.name} ${currentUser.lastName}` : "System Operator",
+              timestamp: new Date()
+            });
+
+            countUpdated++;
+          } else {
+            countNotFound++;
+          }
+        }
+
+        if (countUpdated > 0) {
+          await batch.commit();
+          alert(`ปรับปรุงยอดสต๊อกสิ้นเดือนเสร็จเรียบร้อยแล้ว!\n- ปรับปรุงสำเร็จ: ${countUpdated} รายการ\n- ไม่พบพาร์ทในระบบ: ${countNotFound} รายการ`);
+        } else {
+          alert("ไม่พบข้อมูลสินค้าที่ตรงกับพาร์ทในระบบ หรือ ข้อมูลรูปแบบไม่ถูกต้อง");
+        }
+
+        if (fileInputRef.current) fileInputRef.current.value = "";
+      } catch (err: any) {
+        console.error(err);
+        alert(`เกิดข้อผิดพลาดในการนำเข้าข้อมูล: ${err.message || err}`);
+      }
+    };
+    reader.readAsBinaryString(file);
+  };
+
+  const handlePasteEomSubmit = async () => {
+    if (!pastedText.trim()) {
+      alert("กรุณาวางข้อมูลจากตาราง Excel");
+      return;
+    }
+
+    try {
+      const rows = pastedText.split("\n").map(r => r.split("\t"));
+      if (rows.length < 2) {
+        alert("ข้อมูลตารางมีจำนวนแถวไม่เพียงพอ (อย่างน้อยต้องมีแถวหัวตารางและข้อมูล)");
+        return;
+      }
+
+      const headers = rows[0].map(h => h.trim().toLowerCase().replace(/[\s_-]/g, ""));
+      const findColIndex = (possibleKeys: string[]) => {
+        return headers.findIndex(h => possibleKeys.includes(h));
+      };
+
+      const partNoIdx = findColIndex(["partno", "part", "รหัสสินค้า", "พาร์ท"]);
+      const customerIdx = findColIndex(["customer", "ลูกค้า"]);
+      const countIdx = findColIndex(["actualstock", "physicalcount", "stock", "count", "จำนวนที่นับได้", "นับได้", "ยอดนับจริง"]);
+
+      if (partNoIdx === -1 || customerIdx === -1 || countIdx === -1) {
+        alert("ไม่พบหัวตารางที่ระบุ 'พาร์ท/รหัสสินค้า', 'ลูกค้า', และ 'ยอดนับจริง/จำนวนที่นับได้' กรุณาตรวจสอบและคัดลอกให้ครอบคลุมส่วนหัวตาราง");
+        return;
+      }
+
+      let countUpdated = 0;
+      let countNotFound = 0;
+      const batch = writeBatch(db);
+
+      for (let i = 1; i < rows.length; i++) {
+        const cols = rows[i];
+        if (cols.length < Math.max(partNoIdx, customerIdx, countIdx) + 1) continue;
+
+        const partNo = cols[partNoIdx]?.trim() || "";
+        const customer = cols[customerIdx]?.trim().toUpperCase() || "";
+        const countVal = Number(cols[countIdx]?.trim() || null);
+
+        if (!partNo || !customer || countVal === null || isNaN(countVal)) continue;
+
+        const prodId = getSafeProductId(customer, partNo);
+        const match = products.find(p => p.id === prodId);
+
+        if (match) {
+          const prodRef = doc(db, "products", prodId);
+          batch.update(prodRef, {
+            stock: countVal,
+            openingStock: countVal,
+            receivedTotal: 0,
+            shippedTotal: 0
+          });
+
+          // Also log to adjust_requests as a auto-approved EOM adjustment
+          const reqId = `REQ-EOM-${Date.now().toString().slice(-4)}-${countUpdated}`;
+          const diff = countVal - (match.stock || 0);
+          const reqRef = doc(db, "adjust_requests", reqId);
+          batch.set(reqRef, {
+            id: reqId,
+            partNo: match.partNo,
+            partName: match.partName,
+            currentStock: match.stock || 0,
+            actualStock: countVal,
+            difference: diff,
+            requesterId: currentUser?.id || "00000000",
+            requesterName: currentUser ? `${currentUser.name} ${currentUser.lastName}` : "System Operator",
+            timestamp: new Date(),
+            status: "approved",
+            approvedBy: currentUser ? `${currentUser.name} ${currentUser.lastName} (EOM Paste)` : "Supervisor (EOM Paste)",
+            approvedTimestamp: new Date()
+          });
+
+          // Log to inventory_log
+          const logRef = doc(collection(db, "inventory_log"));
+          batch.set(logRef, {
+            labelId: `ADJ-EOM-${reqId.slice(-4)}`,
+            partNo: match.partNo,
+            partName: match.partName,
+            customer: match.customer,
+            type: diff >= 0 ? "in" : "out",
+            subType: "ตรวจนับสต๊อกสิ้นเดือนประจำเดือน (End of Month Count)",
+            qty: Math.abs(diff),
+            location: "ZONE-ADJ-EOM",
+            shift: "DAY",
+            operatorId: currentUser?.id || "00000000",
+            operatorName: currentUser ? `${currentUser.name} ${currentUser.lastName}` : "System Operator",
+            timestamp: new Date()
+          });
+
+          countUpdated++;
+        } else {
+          countNotFound++;
+        }
+      }
+
+      if (countUpdated > 0) {
+        await batch.commit();
+        alert(`ปรับปรุงยอดสต๊อกสิ้นเดือน (Paste Table) สำเร็จแล้ว!\n- ปรับปรุงสำเร็จ: ${countUpdated} รายการ\n- ไม่พบพาร์ทในระบบ: ${countNotFound} รายการ`);
+        setShowPasteModal(false);
+        setPastedText("");
+      } else {
+        alert("ไม่พบสินค้าที่ตรงกันในระบบ กรุณาตรวจสอบรหัสลูกค้าและพาร์ทใหม่อีกครั้ง");
+      }
+    } catch (err: any) {
+      console.error(err);
+      alert(`เกิดข้อผิดพลาด: ${err.message || err}`);
+    }
+  };
 
   useEffect(() => {
     // 1. Fetch products
@@ -214,12 +435,93 @@ export default function AdjustView({ currentUser }: AdjustViewProps) {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center border-b border-gray-100 pb-5">
+      <div className="flex flex-col sm:flex-row justify-between sm:items-center border-b border-gray-100 pb-5 gap-4">
         <div>
           <h2 className="text-2xl font-bold tracking-tight text-gray-900">ตรวจนับและปรับยอดสต๊อก (Stock Adjust)</h2>
           <p className="text-sm text-gray-500 mt-1">ยื่นคำขอปรับสต๊อกระบบเมื่อยอดนับจริงคลังสินค้าคลาดเคลื่อน</p>
         </div>
+        {isApprover && (
+          <button
+            onClick={() => setShowEomPanel(!showEomPanel)}
+            className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-900 text-white font-bold px-4 py-2.5 rounded-xl text-xs transition shadow-sm cursor-pointer select-none"
+          >
+            <Sparkles className="w-4 h-4 text-amber-400" />
+            <span>{showEomPanel ? "❌ ปิดระบบนับสต๊อกสิ้นเดือน" : "📊 ระบบนับสต๊อกสิ้นเดือน (EOM)"}</span>
+          </button>
+        )}
       </div>
+
+      {showEomPanel && isApprover && (
+        <div className="bg-gradient-to-br from-slate-900 to-slate-850 text-white p-6 rounded-3xl border border-slate-800 shadow-xl space-y-5 animate-in fade-in duration-200">
+          <div className="flex justify-between items-center border-b border-white/10 pb-4">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-amber-500/10 flex items-center justify-center border border-amber-500/20">
+                <Sparkles className="w-5 h-5 text-amber-400 animate-pulse" />
+              </div>
+              <div>
+                <h3 className="font-bold text-sm">ระบบปรับปรุงสต๊อกตรวจนับสิ้นเดือน (EOM Stock Adjuster)</h3>
+                <p className="text-[10px] text-slate-400">อัปเดตยอดสต๊อกคลังหลักทั้งหมดแบบรวดเร็ว และรีเซ็ตยอดรับ/โอนสะสม</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Box 1: File Upload */}
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-3.5 flex flex-col justify-between">
+              <div>
+                <h4 className="font-bold text-xs text-white flex items-center gap-1.5">
+                  <Upload className="w-4 h-4 text-amber-400" />
+                  <span>นำเข้าด้วยไฟล์ Excel (.xlsx / .xls / .csv)</span>
+                </h4>
+                <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
+                  รองรับหัวคอลัมน์ภาษาไทย/อังกฤษ: ลูกค้า (Customer), พาร์ท/รหัสสินค้า (Part No), และ จำนวนที่นับได้/ยอดนับจริง (Actual Stock)
+                </p>
+              </div>
+              <div>
+                <input
+                  type="file"
+                  accept=".xlsx, .xls, .csv"
+                  onChange={handleEomImportExcel}
+                  ref={fileInputRef}
+                  className="hidden"
+                  id="eom-file-upload"
+                />
+                <label
+                  htmlFor="eom-file-upload"
+                  className="w-full flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold py-2.5 rounded-xl cursor-pointer transition text-xs shadow-md"
+                >
+                  <FileSpreadsheet className="w-4 h-4" />
+                  เลือกไฟล์และอัปเดตสต๊อกสิ้นเดือน
+                </label>
+              </div>
+            </div>
+
+            {/* Box 2: Paste Table */}
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-3.5 flex flex-col justify-between">
+              <div>
+                <h4 className="font-bold text-xs text-white flex items-center gap-1.5">
+                  <Clipboard className="w-4 h-4 text-amber-400" />
+                  <span>วางข้อมูลจากตาราง (Paste Table)</span>
+                </h4>
+                <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
+                  คัดลอกข้อมูลเป็นตารางจาก Excel หรือ Google Sheets โดยต้องรวมบรรทัดหัวคอลัมน์มาด้วย แล้วกดวางได้ทันที
+                </p>
+              </div>
+              <button
+                onClick={() => setShowPasteModal(true)}
+                className="w-full flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-750 text-white font-bold py-2.5 rounded-xl cursor-pointer transition text-xs border border-white/15"
+              >
+                <Clipboard className="w-4 h-4 text-amber-400" />
+                เปิดช่องวางข้อมูลตาราง
+              </button>
+            </div>
+          </div>
+          
+          <div className="bg-amber-500/5 border border-amber-500/10 rounded-2xl p-4 text-[11px] text-amber-200/90 leading-relaxed">
+            💡 <strong>คำแนะนำเพิ่มเติม:</strong> การปรับยอดแบบ EOM นี้จะอัปเดตยอดสต๊อกจริง (Stock) และยอดยกมา (Opening Stock) เป็นค่าที่นับได้ล่าสุด และรีเซ็ตยอดรับสะสม (Received) กับยอดโอนสะสม (Shipped) ให้เป็น 0 ทั้งหมดเพื่อเริ่มต้นรอบเดือนใหม่ และจะเก็บบันทึกประวัติและธุรกรรมการตรวจปรับยอดอัตโนมัติลงประวัติทุกรายการ
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Requester Form */}
@@ -452,6 +754,61 @@ export default function AdjustView({ currentUser }: AdjustViewProps) {
                   className="flex-1 bg-red-600 text-white py-2 rounded-xl font-bold hover:bg-red-700"
                 >
                   บันทึกการแก้ไข
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* PASTE DATA MODAL FOR EOM COUNT */}
+      {showPasteModal && isApprover && (
+        <div className="fixed inset-0 z-[120] bg-black/65 flex items-center justify-center p-4 backdrop-blur-xs">
+          <div className="bg-white w-full max-w-2xl rounded-3xl overflow-hidden shadow-2xl border border-gray-150 animate-in fade-in zoom-in duration-200">
+            <div className="bg-slate-900 p-4.5 text-white font-bold flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Clipboard className="w-5 h-5 text-amber-400" />
+                <span>วางข้อมูลจากตารางตระกูล Excel (EOM Adjust)</span>
+              </div>
+              <button 
+                onClick={() => { setShowPasteModal(false); setPastedText(""); }}
+                className="text-gray-400 hover:text-white transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="p-6 space-y-4">
+              <div className="text-xs text-gray-500 space-y-1">
+                <p>📋 <strong>วิธีการใช้งาน:</strong></p>
+                <ol className="list-decimal list-inside space-y-0.5">
+                  <li>เปิดไฟล์ Excel หรือ Google Sheets</li>
+                  <li>คัดลอก (Copy) แถวหัวตารางและแถวข้อมูล เช่น ลูกค้า, รหัสสินค้า, ยอดนับจริง</li>
+                  <li>นำมากดวาง (Paste) ในกล่องข้อความด้านล่างนี้ และกดปุ่มประมวลผล</li>
+                </ol>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-700 block mb-1">วางข้อมูลข้อความตารางที่นี่:</label>
+                <textarea
+                  value={pastedText}
+                  onChange={(e) => setPastedText(e.target.value)}
+                  placeholder="ลูกค้า&#9;รหัสสินค้า&#9;ยอดนับจริง&#10;CUSTOMER_A&#9;PART-001&#9;500&#10;CUSTOMER_B&#9;PART-002&#9;1200"
+                  className="w-full h-64 p-3 border border-gray-200 rounded-xl font-mono text-xs focus:ring-2 focus:ring-slate-800 outline-none resize-none bg-gray-50"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-1 text-xs">
+                <button
+                  onClick={() => { setShowPasteModal(false); setPastedText(""); }}
+                  className="flex-1 border border-gray-200 py-2.5 rounded-xl font-semibold hover:bg-gray-50 transition"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  onClick={handlePasteEomSubmit}
+                  className="flex-1 bg-slate-900 text-white py-2.5 rounded-xl font-bold hover:bg-slate-800 transition"
+                >
+                  ประมวลผลข้อมูลวางและปรับสต๊อก
                 </button>
               </div>
             </div>
