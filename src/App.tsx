@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { collection, onSnapshot, doc, getDoc, setDoc } from "firebase/firestore";
+import { collection, onSnapshot, doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
 import { db } from "./firebase";
 import { Employee } from "./types";
 import { seedDatabaseIfEmpty } from "./utils/seed";
@@ -30,6 +30,7 @@ import {
   Lock,
   UserPlus2,
   Key,
+  ShieldAlert,
 } from "lucide-react";
 
 export default function App() {
@@ -53,6 +54,47 @@ export default function App() {
   const [regLastName, setRegLastName] = useState("");
   const [regDept, setRegDept] = useState("ฝ่ายผลิต");
   const [regRole, setRegRole] = useState("user_production");
+
+  // Force change PIN states
+  const [newPin, setNewPin] = useState("");
+  const [confirmNewPin, setConfirmNewPin] = useState("");
+  const [changePinError, setChangePinError] = useState("");
+
+  const handleForceChangePinSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setChangePinError("");
+
+    if (!currentUser) return;
+
+    if (newPin.length !== 6 || confirmNewPin.length !== 6) {
+      setChangePinError("รหัส PIN จะต้องมีตัวเลขความยาว 6 หลัก");
+      return;
+    }
+    if (newPin === "123456") {
+      setChangePinError("คุณไม่สามารถใช้รหัสเริ่มต้น '123456' เป็นรหัสผ่านใหม่ได้");
+      return;
+    }
+    if (newPin !== confirmNewPin) {
+      setChangePinError("รหัสผ่านใหม่และรหัสยืนยันไม่ตรงกัน กรุณาตรวจสอบอีกครั้ง");
+      return;
+    }
+
+    try {
+      const docRef = doc(db, "employees", currentUser.id);
+      await updateDoc(docRef, { pin: newPin });
+
+      const updatedUser = { ...currentUser, pin: newPin };
+      setCurrentUser(updatedUser);
+      localStorage.setItem("wsm_user_session", JSON.stringify(updatedUser));
+
+      alert("🎉 ยินดีด้วย! เปลี่ยนรหัส PIN ความปลอดภัยส่วนบุคคลเรียบร้อยแล้ว ระบบกำลังนำทางท่านเข้าสู่ระบบ");
+      setNewPin("");
+      setConfirmNewPin("");
+    } catch (err) {
+      console.error(err);
+      setChangePinError("เกิดข้อผิดพลาดจากเซิร์ฟเวอร์ในการแก้ไขรหัส PIN");
+    }
+  };
 
   // Run Seeder and resolve user sessions
   useEffect(() => {
@@ -386,6 +428,89 @@ export default function App() {
             </div>
           </div>
         )}
+      </div>
+    );
+  }
+
+  // FORCE CHANGE DEFAULT PIN SCREEN
+  if (currentUser && currentUser.pin === "123456") {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 relative overflow-hidden font-sans">
+        {/* Decorative background */}
+        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-red-600/10 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-red-800/15 rounded-full blur-3xl pointer-events-none" />
+
+        <div className="w-full max-w-md bg-white border border-gray-100 shadow-2xl rounded-3xl overflow-hidden relative z-10 flex flex-col">
+          {/* Header Banner */}
+          <div className="bg-gradient-to-br from-amber-500 to-amber-600 p-8 text-white text-center relative">
+            <div className="absolute top-3 left-3 bg-white/20 px-2.5 py-1 rounded-md text-[9px] font-bold tracking-widest uppercase">
+              SECURITY FIRST
+            </div>
+            <ShieldAlert className="w-12 h-12 text-white mx-auto animate-bounce mt-3" />
+            <h1 className="text-xl font-black tracking-tight uppercase mt-3">กรุณาเปลี่ยนรหัส PIN เริ่มต้น</h1>
+            <p className="text-xs text-amber-50 font-semibold mt-1">เพื่อความปลอดภัยส่วนบุคคลในการปกป้องข้อมูลของระบบ</p>
+          </div>
+
+          {/* Form */}
+          <form onSubmit={handleForceChangePinSubmit} className="p-8 space-y-5">
+            <div className="bg-amber-50 border border-amber-200 text-amber-800 p-4 rounded-xl text-xs space-y-1">
+              <p className="font-extrabold flex items-center gap-1.5 text-[13px]">
+                <span>⚠️ ตรวจพบการเข้าใช้งานครั้งแรก</span>
+              </p>
+              <p className="text-amber-700 leading-relaxed font-semibold">
+                เนื่องจากคุณใช้รหัส PIN ทั่วไปคือกุญแจ <strong>123456</strong> ซึ่งเป็นรหัสเริ่มต้นระบบ เพื่อความปลอดภัย กรุณาตั้งค่ารหัส PIN ใหม่ 6 หลักของคุณเองก่อนเริ่มใช้งาน
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-gray-600 uppercase tracking-wider block">รหัส PIN ใหม่ 6 หลัก (เฉพาะตัวเลข)</label>
+              <input
+                type="password"
+                maxLength={6}
+                required
+                placeholder="ป้อนรหัส PIN ใหม่ 6 หลัก"
+                value={newPin}
+                onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ""))}
+                className="w-full px-4 py-3 border border-gray-200 rounded-2xl text-sm text-center tracking-widest focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition font-mono font-bold"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-gray-600 uppercase tracking-wider block">ยืนยันรหัส PIN ใหม่</label>
+              <input
+                type="password"
+                maxLength={6}
+                required
+                placeholder="ป้อนยืนยันรหัส PIN อีกครั้ง"
+                value={confirmNewPin}
+                onChange={(e) => setConfirmNewPin(e.target.value.replace(/\D/g, ""))}
+                className="w-full px-4 py-3 border border-gray-200 rounded-2xl text-sm text-center tracking-widest focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition font-mono font-bold"
+              />
+            </div>
+
+            {changePinError && (
+              <p className="text-xs font-bold text-red-600 text-center bg-red-50 border border-red-100 p-2.5 rounded-xl">
+                {changePinError}
+              </p>
+            )}
+
+            <button
+              type="submit"
+              className="w-full bg-amber-600 hover:bg-amber-700 text-white font-extrabold py-3.5 rounded-2xl transition cursor-pointer shadow-lg shadow-amber-600/20 text-sm"
+            >
+              ยืนยันเปลี่ยนรหัสผ่านใหม่
+            </button>
+
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="w-full bg-slate-100 hover:bg-slate-200 text-gray-600 font-semibold py-2.5 rounded-2xl transition cursor-pointer text-xs flex items-center justify-center gap-1.5"
+            >
+              <LogOut className="w-3.5 h-3.5 text-red-500" />
+              <span>ย้อนกลับไปหน้าเข้าสู่ระบบ</span>
+            </button>
+          </form>
+        </div>
       </div>
     );
   }

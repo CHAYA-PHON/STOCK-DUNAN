@@ -28,6 +28,7 @@ export interface Product {
   receivedTotal: number; // รับรวม
   shippedTotal: number; // โอนรวม
   stock: number; // คงเหลือ (opening + received - shipped)
+  boxSize?: string; // ขนาดกล่อง (S, M, L, XL etc.)
 }
 
 export interface InventoryTransaction {
@@ -36,7 +37,8 @@ export interface InventoryTransaction {
   partNo: string;
   partName: string;
   customer: string;
-  type: "in" | "out";
+  subCustomer?: string | null; // สำหรับกลุ่ม BOI (SAMBO, AMAKASAKI, etc.)
+  type: "in" | "out" | "adj_in" | "adj_out";
   subType: string; // "รับเข้าจากฝ่ายผลิต" etc. / "ส่งสโตร์ FG", "เบิกงาน Rework", "เบิกงานจาก TN" etc.
   qty: number;
   location: string;
@@ -51,6 +53,7 @@ export interface AdjustRequest {
   id: string;
   partNo: string;
   partName: string;
+  subCustomer?: string | null; // สำหรับกลุ่ม BOI
   currentStock: number;
   actualStock: number;
   difference: number;

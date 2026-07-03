@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from "react";
-import { collection, onSnapshot, doc, getDoc, writeBatch, setDoc, updateDoc } from "firebase/firestore";
+import { collection, onSnapshot, doc, getDoc, writeBatch, setDoc, updateDoc, addDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import { Product, Employee, InventoryTransaction, LocationItem } from "../types";
 import { fuzzySearch } from "../utils/fuzzy";
 import { getSafeProductId } from "../utils/productUtils";
 import { QRScannerModal } from "./index";
 import { Search, Tag, Trash2, Save, Plus, AlertCircle, PlusCircle, Check } from "lucide-react";
+import { BOX_SIZE_OPTIONS, getRecommendedBoxSizes, getCustomerGroup, DEFAULT_BOI_CUSTOMERS, BOICustomer } from "../utils/boxSizeUtils";
 
 interface StockInViewProps {
   currentUser: Employee | null;
@@ -29,6 +30,18 @@ export default function StockInView({ currentUser }: StockInViewProps) {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [fuzzyResults, setFuzzyResults] = useState<Product[]>([]);
   const [editFullBox, setEditFullBox] = useState<number>(0);
+  const [boxSize, setBoxSize] = useState("");
+
+  // BOI Customer States
+  const [boiCustomers, setBoiCustomers] = useState<BOICustomer[]>([]);
+  const [selectedBoiSubCustomer, setSelectedBoiSubCustomer] = useState("");
+  const [isAddingBoi, setIsAddingBoi] = useState(false);
+  const [newBoiName, setNewBoiName] = useState("");
+  const [newBoiGroup, setNewBoiGroup] = useState<"CTC" | "อื่นๆ">("CTC");
+
+  // Custom box size states
+  const [isCustomBoxSize, setIsCustomBoxSize] = useState(false);
+  const [customBoxSizeInput, setCustomBoxSizeInput] = useState("");
 
   // Queue List
   const [queue, setQueue] = useState<Omit<InventoryTransaction, "id" | "timestamp">[]>([]);
@@ -36,6 +49,8 @@ export default function StockInView({ currentUser }: StockInViewProps) {
   // Modals & Triggers
   const [scannerOpen, setScannerOpen] = useState(false);
   const [scannerTarget, setScannerTarget] = useState<"part" | "label">("part");
+  const [isPartFocused, setIsPartFocused] = useState(false);
+  const [isLabelFocused, setIsLabelFocused] = useState(false);
   const [showNewProductForm, setShowNewProductForm] = useState(false);
   const [showNewTypeForm, setShowNewTypeForm] = useState(false);
   const [newTypeName, setNewTypeName] = useState("");
@@ -76,10 +91,27 @@ export default function StockInView({ currentUser }: StockInViewProps) {
       }
     });
 
+    // 4. Fetch BOI Sub Customers
+    const unsubBoi = onSnapshot(collection(db, "boi_sub_customers"), (snap) => {
+      if (snap.empty) {
+        // Pre-populate with default ones
+        DEFAULT_BOI_CUSTOMERS.forEach((c) => {
+          addDoc(collection(db, "boi_sub_customers"), c);
+        });
+      } else {
+        const items: BOICustomer[] = [];
+        snap.forEach((doc) => {
+          items.push({ id: doc.id, ...doc.data() } as BOICustomer);
+        });
+        setBoiCustomers(items);
+      }
+    });
+
     return () => {
       unsubProds();
       unsubLocs();
       unsubSettings();
+      unsubBoi();
     };
   }, []);
 
@@ -115,7 +147,54 @@ export default function StockInView({ currentUser }: StockInViewProps) {
     setSelectedProduct(prod);
     setQty(prod.fullBox || 0);
     setEditFullBox(prod.fullBox || 0);
+    const bs = prod.boxSize || "";
+    setBoxSize(bs);
+    setSelectedBoiSubCustomer(""); // Reset BOI sub-customer
     setFuzzyResults([]);
+
+    if (bs && !BOX_SIZE_OPTIONS.includes(bs)) {
+      setIsCustomBoxSize(true);
+      setCustomBoxSizeInput(bs);
+    } else {
+      setIsCustomBoxSize(false);
+      setCustomBoxSizeInput("");
+    }
+  };
+
+  const handleBoxSizeChange = async (newVal: string) => {
+    if (newVal === "__custom__") {
+      setIsCustomBoxSize(true);
+      setCustomBoxSizeInput("");
+      setBoxSize("");
+      return;
+    }
+    setIsCustomBoxSize(false);
+    setBoxSize(newVal);
+    if (selectedProduct) {
+      try {
+        const prodRef = doc(db, "products", selectedProduct.id);
+        await setDoc(prodRef, { boxSize: newVal }, { merge: true });
+        // Update local state reference
+        setSelectedProduct({ ...selectedProduct, boxSize: newVal });
+      } catch (err) {
+        console.error("Error updating box size:", err);
+      }
+    }
+  };
+
+  const handleCustomBoxSizeSave = async (customVal: string) => {
+    const val = customVal.trim();
+    if (!val) return;
+    setBoxSize(val);
+    if (selectedProduct) {
+      try {
+        const prodRef = doc(db, "products", selectedProduct.id);
+        await setDoc(prodRef, { boxSize: val }, { merge: true });
+        setSelectedProduct({ ...selectedProduct, boxSize: val });
+      } catch (err) {
+        console.error("Error updating custom box size:", err);
+      }
+    }
   };
 
   const handleFullBoxChange = async (newVal: number) => {
@@ -150,6 +229,7 @@ export default function StockInView({ currentUser }: StockInViewProps) {
     } else {
       setLabelId(text);
     }
+    setScannerOpen(false); // Close box scanner popup immediately
   };
 
   const addCustomInType = async () => {
@@ -221,6 +301,10 @@ export default function StockInView({ currentUser }: StockInViewProps) {
       alert("กรุณาค้นหาและเลือกพาร์ทสินค้าก่อนเพิ่ม");
       return;
     }
+    if (selectedProduct.customer.toUpperCase() === "BOI" && !selectedBoiSubCustomer) {
+      alert("กรุณาเลือกชื่อลูกค้าในกลุ่ม BOI");
+      return;
+    }
     if (!location) {
       alert("กรุณาเลือก Location ปลายทาง");
       return;
@@ -247,6 +331,7 @@ export default function StockInView({ currentUser }: StockInViewProps) {
       partNo: selectedProduct.partNo,
       partName: selectedProduct.partName,
       customer: selectedProduct.customer,
+      subCustomer: selectedProduct.customer.toUpperCase() === "BOI" ? (selectedBoiSubCustomer || null) : null,
       type: "in",
       subType,
       qty,
@@ -258,10 +343,10 @@ export default function StockInView({ currentUser }: StockInViewProps) {
 
     setQueue([...queue, item]);
 
-    // Clear inputs for next item
-    setLabelId("");
-    setPartSearch("");
-    setSelectedProduct(null);
+    // Keep inputs for next item as per user request ("ให้แสดงค่าค้างไว้ หลังจากกดใส่ตะกร้าแล้ว จนกว่าจะกดเปลี่ยน")
+    // setLabelId("");
+    // setPartSearch("");
+    // setSelectedProduct(null);
   };
 
   const handleRemoveFromQueue = (index: number) => {
@@ -415,8 +500,21 @@ export default function StockInView({ currentUser }: StockInViewProps) {
           {/* Part Search Section */}
           <div className="space-y-3">
             <div>
-              <div className="flex justify-between">
-                <label className="text-xs font-semibold text-gray-600">ค้นหา / สแกน Part No</label>
+              <div className="flex justify-between items-center flex-wrap gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="text-xs font-semibold text-gray-600">ค้นหา / สแกน Part No</label>
+                  {isPartFocused ? (
+                    <span className="text-[10px] text-green-600 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full font-bold flex items-center gap-1 animate-pulse">
+                      <span className="h-1.5 w-1.5 rounded-full bg-green-500 animate-ping" />
+                      <span>Ready to Scan (พร้อมสแกน)</span>
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-gray-400 bg-gray-50 border border-gray-200 px-2 py-0.5 rounded-full font-medium flex items-center gap-1">
+                      <span className="h-1.5 w-1.5 rounded-full bg-gray-300" />
+                      <span>คลิกที่นี่เพื่อรอสแกน</span>
+                    </span>
+                  )}
+                </div>
                 {selectedProduct && (
                   <span className="text-xs text-green-600 font-bold flex items-center gap-1">
                     <Check className="w-3.5 h-3.5" /> เลือกพาร์ทเรียบร้อย
@@ -431,6 +529,8 @@ export default function StockInView({ currentUser }: StockInViewProps) {
                     placeholder="พิมพ์รหัสสินค้าเพื่อค้นหา (Fuzzy)..."
                     value={partSearch}
                     onChange={(e) => setPartSearch(e.target.value)}
+                    onFocus={() => setIsPartFocused(true)}
+                    onBlur={() => setIsPartFocused(false)}
                     className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
                   />
                 </div>
@@ -502,35 +602,233 @@ export default function StockInView({ currentUser }: StockInViewProps) {
                 </div>
               </div>
             )}
+
+            {/* BOI Sub-Customer Selector */}
+            {selectedProduct && selectedProduct.customer.toUpperCase() === "BOI" && (
+              <div className="bg-red-50/50 border border-red-200/60 p-4 rounded-2xl space-y-3">
+                <div className="flex justify-between items-center">
+                  <span className="text-xs font-bold text-red-800 flex items-center gap-1">
+                    💼 ลูกค้าในกลุ่ม BOI (งานซื้อมาขายไป)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setIsAddingBoi(!isAddingBoi)}
+                    className="text-[10px] bg-red-600 hover:bg-red-700 text-white font-semibold px-2 py-1 rounded transition flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="w-3 h-3" /> เพิ่มชื่อลูกค้า
+                  </button>
+                </div>
+
+                {isAddingBoi ? (
+                  <div className="bg-white border border-red-100 p-3 rounded-xl space-y-2.5 shadow-sm">
+                    <p className="text-[10px] font-bold text-gray-700">➕ เพิ่มรายชื่อลูกค้า BOI ใหม่</p>
+                    <div>
+                      <input
+                        type="text"
+                        placeholder="ระบุชื่อลูกค้า เช่น SAMBO, AMAKASAKI"
+                        value={newBoiName}
+                        onChange={(e) => setNewBoiName(e.target.value)}
+                        className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs outline-none focus:ring-1 focus:ring-red-500"
+                      />
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-3">
+                        <label className="flex items-center gap-1 text-[11px] text-gray-600 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="boi_group"
+                            checked={newBoiGroup === "CTC"}
+                            onChange={() => setNewBoiGroup("CTC")}
+                            className="text-red-600 focus:ring-red-500"
+                          />
+                          กลุ่ม CTC
+                        </label>
+                        <label className="flex items-center gap-1 text-[11px] text-gray-600 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="boi_group"
+                            checked={newBoiGroup === "อื่นๆ"}
+                            onChange={() => setNewBoiGroup("อื่นๆ")}
+                            className="text-red-600 focus:ring-red-500"
+                          />
+                          อื่นๆ
+                        </label>
+                      </div>
+                      <div className="flex gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setIsAddingBoi(false)}
+                          className="text-[10px] text-gray-500 bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded font-medium"
+                        >
+                          ยกเลิก
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (!newBoiName.trim()) {
+                              alert("กรุณากรอกชื่อลูกค้า");
+                              return;
+                            }
+                            try {
+                              await addDoc(collection(db, "boi_sub_customers"), {
+                                name: newBoiName.trim().toUpperCase(),
+                                group: newBoiGroup
+                              });
+                              setNewBoiName("");
+                              setIsAddingBoi(false);
+                              alert("เพิ่มรายชื่อลูกค้า BOI สำเร็จ!");
+                            } catch (err) {
+                              console.error("Error adding BOI sub customer:", err);
+                            }
+                          }}
+                          className="text-[10px] text-white bg-red-600 hover:bg-red-700 px-2.5 py-1 rounded font-semibold"
+                        >
+                          บันทึก
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+
+                <div>
+                  <select
+                    value={selectedBoiSubCustomer}
+                    onChange={(e) => setSelectedBoiSubCustomer(e.target.value)}
+                    className="w-full px-3 py-2 border border-red-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-red-500 bg-white font-medium"
+                  >
+                    <option value="">-- กรุณาเลือกชื่อลูกค้า BOI --</option>
+                    <optgroup label="กลุ่ม CTC">
+                      {boiCustomers
+                        .filter((c) => c.group === "CTC")
+                        .map((c) => (
+                          <option key={c.id || c.name} value={c.name}>
+                            {c.name}
+                          </option>
+                        ))}
+                    </optgroup>
+                    <optgroup label="อื่นๆ">
+                      {boiCustomers
+                        .filter((c) => c.group === "อื่นๆ")
+                        .map((c) => (
+                          <option key={c.id || c.name} value={c.name}>
+                            {c.name}
+                          </option>
+                        ))}
+                    </optgroup>
+                  </select>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Box count and Label assignment */}
-          <div className="grid grid-cols-2 gap-3 pt-1">
+          <div className="grid grid-cols-3 gap-3 pt-1">
             <div>
-              <label className="text-xs font-semibold text-gray-600">Full Box (จำนวนต่อกล่อง)</label>
+              <label className="text-xs font-semibold text-gray-600 block">ขนาดกล่อง (Box Size)</label>
+              <select
+                disabled={!selectedProduct}
+                value={isCustomBoxSize ? "__custom__" : boxSize}
+                onChange={(e) => handleBoxSizeChange(e.target.value)}
+                className="w-full mt-1 px-1.5 py-2 border border-gray-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-gray-50 disabled:text-gray-400 bg-white font-medium"
+              >
+                <option value="">-- เลือก --</option>
+                {selectedProduct && (
+                  <>
+                    <optgroup label="แนะนำสำหรับลูกค้านี้ (Recommended)">
+                      {getRecommendedBoxSizes(selectedProduct.customer).map((opt) => (
+                        <option key={opt} value={opt}>
+                          {opt}
+                        </option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="ขนาดกล่องทั้งหมด (All Box Sizes)">
+                      {BOX_SIZE_OPTIONS.filter((opt) => !getRecommendedBoxSizes(selectedProduct.customer).includes(opt)).map((opt) => (
+                        <option key={opt} value={opt}>
+                          {opt}
+                        </option>
+                      ))}
+                    </optgroup>
+                  </>
+                )}
+                <option value="__custom__">⚙️ ระบุเอง / เพิ่มเติม...</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-gray-600 block">Full Box (ต่อกล่อง)</label>
               <input
                 type="number"
                 disabled={!selectedProduct}
                 value={editFullBox}
                 onChange={(e) => handleFullBoxChange(Number(e.target.value))}
-                className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-gray-50 disabled:text-gray-400"
+                className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-gray-50 disabled:text-gray-400 font-mono font-bold"
               />
             </div>
 
             <div>
-              <label className="text-xs font-semibold text-gray-600">จำนวนที่รับเข้าจริง (Qty)</label>
+              <label className="text-xs font-semibold text-gray-600 block">จำนวนรับจริง (Qty)</label>
               <input
                 type="number"
                 disabled={!selectedProduct}
                 value={qty}
                 onChange={(e) => setQty(Number(e.target.value))}
-                className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-gray-50 disabled:text-gray-400"
+                className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-gray-50 disabled:text-gray-400 font-mono font-bold"
               />
             </div>
           </div>
 
+          {/* Custom Box Size Input Panel */}
+          {isCustomBoxSize && selectedProduct && (
+            <div className="bg-slate-50 border border-slate-200 p-3 rounded-2xl flex flex-col gap-1.5 mt-1">
+              <label className="text-[10px] font-bold text-slate-600 block">ระบุขนาดกล่องด้วยตัวเอง (Custom Box Size)</label>
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  placeholder="เช่น เขียว XXL, กล่องพิเศษ 2"
+                  value={customBoxSizeInput}
+                  onChange={(e) => setCustomBoxSizeInput(e.target.value)}
+                  className="flex-1 px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs outline-none bg-white focus:ring-1 focus:ring-red-500 font-medium"
+                />
+                <button
+                  type="button"
+                  onClick={() => handleCustomBoxSizeSave(customBoxSizeInput)}
+                  className="bg-slate-800 hover:bg-slate-900 text-white px-3 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 shrink-0 cursor-pointer"
+                >
+                  <Save className="w-3.5 h-3.5" /> บันทึกขนาด
+                </button>
+              </div>
+              <p className="text-[9px] text-slate-400">ขนาดกล่องจะถูกบันทึกเข้าข้อมูลสินค้าหลักของพาร์ทนี้โดยอัตโนมัติเมื่อกดบันทึก</p>
+            </div>
+          )}
+
+          {/* Calculated Box Count Widget */}
+          {selectedProduct && editFullBox > 0 && qty > 0 && (
+            <div className="text-xs bg-slate-50 border border-slate-200/60 p-3 rounded-xl flex justify-between items-center text-slate-700 shadow-3xs">
+              <span className="font-semibold text-slate-600 flex items-center gap-1">📦 จำนวนกล่องคำนวณได้:</span>
+              <span className="font-extrabold text-red-600 text-sm font-mono">
+                {Math.ceil(qty / editFullBox)} <span className="text-xs text-slate-500 font-normal">กล่อง</span>
+                <span className="text-[10px] text-slate-400 font-normal ml-1.5">
+                  ({(qty / editFullBox).toFixed(2)} กล่อง)
+                </span>
+              </span>
+            </div>
+          )}
+
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-gray-600 block">Label ID (เลขลาเบลระบุสินค้า)</label>
+            <div className="flex justify-between items-center flex-wrap gap-2">
+              <label className="text-xs font-semibold text-gray-600 block">Label ID (เลขลาเบลระบุสินค้า)</label>
+              {isLabelFocused ? (
+                <span className="text-[10px] text-green-600 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full font-bold flex items-center gap-1 animate-pulse">
+                  <span className="h-1.5 w-1.5 rounded-full bg-green-500 animate-ping" />
+                  <span>Ready to Scan (พร้อมสแกน)</span>
+                </span>
+              ) : (
+                <span className="text-[10px] text-gray-400 bg-gray-50 border border-gray-200 px-2 py-0.5 rounded-full font-medium flex items-center gap-1">
+                  <span className="h-1.5 w-1.5 rounded-full bg-gray-300" />
+                  <span>คลิกที่นี่เพื่อรอสแกน</span>
+                </span>
+              )}
+            </div>
             <div className="flex gap-2">
               <div className="relative flex-1">
                 <input
@@ -538,6 +836,8 @@ export default function StockInView({ currentUser }: StockInViewProps) {
                   placeholder="พิมพ์หรือแสกนรหัสลาเบล..."
                   value={labelId}
                   onChange={(e) => setLabelId(e.target.value)}
+                  onFocus={() => setIsLabelFocused(true)}
+                  onBlur={() => setIsLabelFocused(false)}
                   className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
                 />
               </div>

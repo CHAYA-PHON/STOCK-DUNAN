@@ -32,27 +32,18 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
   const [profileName, setProfileName] = useState(currentUser?.name || "");
   const [profileLastName, setProfileLastName] = useState(currentUser?.lastName || "");
   const [profilePhone, setProfilePhone] = useState(currentUser?.phone || "");
-  const [profileAvatar, setProfileAvatar] = useState(currentUser?.avatarUrl || "");
-
-  // Google Drive Integration states
-  const [driveToken, setDriveToken] = useState<string | null>(null);
-  const [isDriveUploading, setIsDriveUploading] = useState(false);
-  const [driveUploadError, setDriveUploadError] = useState("");
-  const [showPopupWarning, setShowPopupWarning] = useState(false);
-
-  // Preset Avatars
-  const presetAvatars = [
-    { name: "Operator F", url: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80" },
-    { name: "Operator M", url: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80" },
-    { name: "Leader F", url: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80" },
-    { name: "3D Avatar", url: "https://images.unsplash.com/photo-1628157582853-a796fa650a6a?w=150&auto=format&fit=crop&q=80" },
-  ];
 
   // Location Batch Generator
   const [locPrefix, setLocPrefix] = useState("CTC");
   const [locStart, setLocStart] = useState<number>(0);
   const [locEnd, setLocEnd] = useState<number>(12);
   const [batchLoading, setBatchLoading] = useState(false);
+
+  // Edit batch states
+  const [editingBatch, setEditingBatch] = useState<LocationBatch | null>(null);
+  const [editPrefix, setEditPrefix] = useState("");
+  const [editStart, setEditStart] = useState<number>(0);
+  const [editEnd, setEditEnd] = useState<number>(12);
 
   // History list of location batches
   const [batches, setBatches] = useState<LocationBatch[]>([]);
@@ -65,7 +56,6 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
       setProfileName(currentUser.name || "");
       setProfileLastName(currentUser.lastName || "");
       setProfilePhone(currentUser.phone || "");
-      setProfileAvatar(currentUser.avatarUrl || "");
     }
   }, [currentUser]);
 
@@ -87,145 +77,6 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
     return unsub;
   }, []);
 
-  const handleGoogleDriveLogin = async (): Promise<string | null> => {
-    if (driveToken) return driveToken;
-    try {
-      const provider = new GoogleAuthProvider();
-      provider.addScope("https://www.googleapis.com/auth/drive.file");
-      const result = await signInWithPopup(auth, provider);
-      const credential = GoogleAuthProvider.credentialFromResult(result);
-      const token = credential?.accessToken || null;
-      if (token) {
-        setDriveToken(token);
-        setShowPopupWarning(false);
-        return token;
-      } else {
-        throw new Error("ไม่สามารถเรียกดู Access Token ของ Google Drive ได้");
-      }
-    } catch (err: any) {
-      console.error(err);
-      if (err.code === "auth/popup-blocked" || err.message?.includes("popup-blocked") || err.message?.includes("popup")) {
-        setShowPopupWarning(true);
-        alert("⚠️ เบราว์เซอร์บล็อกหน้าต่างเข้าสู่ระบบ (Popup Blocked) เนื่องจากแอปทำงานอยู่ใน iFrame ของระบบ AI Studio\n\nโปรดกดปุ่มสีส้ม 'เปิดแอปในแท็บใหม่' ที่แสดงขึ้นมาใต้ปุ่มอัปโหลด เพื่อให้สามารถเชื่อมต่อ Google Drive ได้อย่างปลอดภัยและราบรื่น!");
-      } else {
-        alert(`เชื่อมต่อสิทธิ์ Google Drive ไม่สำเร็จ: ${err.message || err}`);
-      }
-      return null;
-    }
-  };
-
-  const handleFileChangeAndUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (currentUser?.approved === false) {
-      alert("สิทธิ์การใช้งานของคุณคือเข้าดูระบบได้เท่านั้น ไม่สามารถดำเนินการอัปโหลดภาพได้");
-      return;
-    }
-
-    setIsDriveUploading(true);
-    setDriveUploadError("");
-
-    try {
-      // 1. Authenticate with Google and get Access Token
-      const token = await handleGoogleDriveLogin();
-      if (!token) {
-        setIsDriveUploading(false);
-        return;
-      }
-
-      // 2. Read file to base64 format
-      const reader = new FileReader();
-      const fileDataPromise = new Promise<string>((resolve, reject) => {
-        reader.onload = () => {
-          const base64Data = (reader.result as string).split(",")[1];
-          resolve(base64Data);
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
-
-      const base64Data = await fileDataPromise;
-
-      // 3. Setup file metadata for Google Drive
-      const metadata = {
-        name: `employee_avatar_${currentUser?.id || "unknown"}_${Date.now()}_${file.name}`,
-        mimeType: file.type,
-      };
-
-      // 4. Construct Multipart Request Body
-      const boundary = "314159265358979323846";
-      const delimiter = `\r\n--${boundary}\r\n`;
-      const closeDelimiter = `\r\n--${boundary}--`;
-
-      const multipartBody =
-        delimiter +
-        "Content-Type: application/json; charset=UTF-8\r\n\r\n" +
-        JSON.stringify(metadata) +
-        delimiter +
-        `Content-Type: ${file.type}\r\n` +
-        "Content-Transfer-Encoding: base64\r\n\r\n" +
-        base64Data +
-        closeDelimiter;
-
-      // 5. Send POST multipart upload request to Google Drive API
-      const uploadResponse = await fetch(
-        "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": `multipart/related; boundary=${boundary}`,
-          },
-          body: multipartBody,
-        }
-      );
-
-      if (!uploadResponse.ok) {
-        const errText = await uploadResponse.text();
-        throw new Error(`Google Drive API upload failure: ${errText}`);
-      }
-
-      const fileData = await uploadResponse.json();
-      const fileId = fileData.id;
-
-      // 6. Set public reader permission for newly uploaded avatar
-      try {
-        const permissionResponse = await fetch(
-          `https://www.googleapis.com/drive/v3/files/${fileId}/permissions`,
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${token}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              role: "reader",
-              type: "anyone",
-            }),
-          }
-        );
-        if (!permissionResponse.ok) {
-          console.warn("Unable to share file public permission", await permissionResponse.text());
-        }
-      } catch (permissionErr) {
-        console.error("Error writing Google Drive permissions:", permissionErr);
-      }
-
-      // 7. Get standard fast image thumbnail source
-      const driveThumbnailUrl = `https://drive.google.com/thumbnail?sz=w500&id=${fileId}`;
-      setProfileAvatar(driveThumbnailUrl);
-      alert("🎉 อัปโหลดไฟล์ภาพและนำไปฝากไว้ที่ Google Drive เรียบร้อยแล้ว! กรุณากดปุ่ม 'บันทึกข้อมูลส่วนตัว' เพื่ออัปเดตลงฐานข้อมูลพนักงาน");
-    } catch (err: any) {
-      console.error(err);
-      setDriveUploadError(err.message || "เกิดข้อผิดพลาดในการเชื่อมโยงไฟล์");
-      alert(`อัปโหลดไฟล์ไม่สำเร็จ: ${err.message || err}`);
-    } finally {
-      setIsDriveUploading(false);
-      e.target.value = ""; // clear input
-    }
-  };
-
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser) return;
@@ -241,7 +92,6 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
           name: profileName.trim(),
           lastName: profileLastName.trim(),
           phone: profilePhone.trim(),
-          avatarUrl: profileAvatar.trim(),
         },
         { merge: true }
       );
@@ -337,12 +187,163 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
     }
   };
 
+  const handleDeleteBatch = async (batchItem: LocationBatch) => {
+    if (!currentUser) return;
+    if (currentUser?.approved === false) {
+      alert("สิทธิ์การใช้งานของคุณคือเข้าดูระบบได้เท่านั้น ไม่สามารถดำเนินการลบได้");
+      return;
+    }
+
+    const deleteLocations = window.confirm(
+      `คุณต้องการลบประวัติการสร้างชุดพิกัด "${batchItem.prefix}" หรือไม่?\n\n*ต้องการลบตำแหน่ง Location ทั้งหมด (${batchItem.prefix}-${batchItem.startIndex.toString().padStart(2, "0")} ถึง ${batchItem.prefix}-${batchItem.endIndex.toString().padStart(2, "0")}) ออกจากฐานข้อมูลระบบด้วยหรือไม่?`
+    );
+
+    if (deleteLocations) {
+      try {
+        const batch = writeBatch(db);
+        
+        // 1. Delete generated locations from the locations collection
+        for (let i = batchItem.startIndex; i <= batchItem.endIndex; i++) {
+          const paddedNum = i.toString().padStart(2, "0");
+          const locName = `${batchItem.prefix.toUpperCase()}-${paddedNum}`;
+          const locRef = doc(db, "locations", locName);
+          batch.delete(locRef);
+        }
+
+        // 2. Delete the batch log doc
+        const batchLogRef = doc(db, "location_batches", batchItem.id);
+        batch.delete(batchLogRef);
+
+        await batch.commit();
+        alert("ลบข้อมูลประวัติชุดพิกัดและตำแหน่ง Location สำเร็จเรียบร้อย!");
+      } catch (err) {
+        console.error(err);
+        alert("เกิดข้อผิดพลาดในการลบข้อมูล: " + (err instanceof Error ? err.message : String(err)));
+      }
+    }
+  };
+
+  const handleStartEditBatch = (batchItem: LocationBatch) => {
+    setEditingBatch(batchItem);
+    setEditPrefix(batchItem.prefix);
+    setEditStart(batchItem.startIndex);
+    setEditEnd(batchItem.endIndex);
+  };
+
+  const handleUpdateBatch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingBatch || !currentUser) return;
+
+    try {
+      const batch = writeBatch(db);
+
+      // 1. Delete old generated locations first (safely based on the old batch metadata)
+      for (let i = editingBatch.startIndex; i <= editingBatch.endIndex; i++) {
+        const paddedNum = i.toString().padStart(2, "0");
+        const locName = `${editingBatch.prefix.toUpperCase()}-${paddedNum}`;
+        const locRef = doc(db, "locations", locName);
+        batch.delete(locRef);
+      }
+
+      // 2. Write new generated locations
+      const generatedCount = editEnd - editStart + 1;
+      for (let i = editStart; i <= editEnd; i++) {
+        const paddedNum = i.toString().padStart(2, "0");
+        const locName = `${editPrefix.trim().toUpperCase()}-${paddedNum}`;
+        const locRef = doc(db, "locations", locName);
+        batch.set(locRef, {
+          name: locName,
+          created: new Date(),
+        });
+      }
+
+      // 3. Update the batch metadata document
+      const batchLogRef = doc(db, "location_batches", editingBatch.id);
+      batch.set(batchLogRef, {
+        prefix: editPrefix.trim().toUpperCase(),
+        startIndex: editStart,
+        endIndex: editEnd,
+        totalCreated: generatedCount,
+        createdBy: `${currentUser.name} ${currentUser.lastName}`,
+        createdAt: new Date(),
+      });
+
+      await batch.commit();
+      alert("แก้ไขข้อมูลชุดพิกัดและอัปเดตตำแหน่ง Location สำเร็จเรียบร้อย!");
+      setEditingBatch(null);
+    } catch (err) {
+      console.error(err);
+      alert("เกิดข้อผิดพลาดในการแก้ไขข้อมูลชุดพิกัด: " + (err instanceof Error ? err.message : String(err)));
+    }
+  };
+
+  const handleQuickCreateDitGmt = async () => {
+    if (!currentUser) return;
+    if (currentUser?.approved === false) {
+      alert("สิทธิ์การใช้งานของคุณคือเข้าดูระบบได้เท่านั้น ไม่สามารถสร้างพิกัดได้");
+      return;
+    }
+    const confirmSeed = window.confirm("คุณต้องการจำลองสร้างข้อมูลพิกัด DIT-00 ถึง DIT-12 และ GMT-00 ถึง GMT-12 ทั้งหมดพร้อมบันทึกลงประวัติทันทีเลยหรือไม่?");
+    if (!confirmSeed) return;
+
+    setBatchLoading(true);
+    try {
+      const batch = writeBatch(db);
+      
+      // DIT (0 to 12)
+      for (let i = 0; i <= 12; i++) {
+        const paddedNum = i.toString().padStart(2, "0");
+        const locName = `DIT-${paddedNum}`;
+        const ref = doc(db, "locations", locName);
+        batch.set(ref, { name: locName, created: new Date() });
+      }
+      
+      // GMT (0 to 12)
+      for (let i = 0; i <= 12; i++) {
+        const paddedNum = i.toString().padStart(2, "0");
+        const locName = `GMT-${paddedNum}`;
+        const ref = doc(db, "locations", locName);
+        batch.set(ref, { name: locName, created: new Date() });
+      }
+
+      await batch.commit();
+
+      // Log both to location_batches
+      const batchLogRef1 = doc(collection(db, "location_batches"));
+      await setDoc(batchLogRef1, {
+        prefix: "DIT",
+        startIndex: 0,
+        endIndex: 12,
+        totalCreated: 13,
+        createdBy: `${currentUser.name} ${currentUser.lastName}`,
+        createdAt: new Date(),
+      });
+
+      const batchLogRef2 = doc(collection(db, "location_batches"));
+      await setDoc(batchLogRef2, {
+        prefix: "GMT",
+        startIndex: 0,
+        endIndex: 12,
+        totalCreated: 13,
+        createdBy: `${currentUser.name} ${currentUser.lastName}`,
+        createdAt: new Date(),
+      });
+
+      alert("สร้างชุดข้อมูลพิกัด DIT และ GMT (00-12) อัตโนมัติในระบบฐานข้อมูลเรียบร้อยแล้ว!");
+    } catch (err) {
+      console.error(err);
+      alert("เกิดข้อผิดพลาดในการสร้างข้อมูลพิกัด DIT และ GMT: " + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setBatchLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center border-b border-gray-100 pb-5">
         <div>
           <h2 className="text-2xl font-bold tracking-tight text-gray-900">ตั้งค่าระบบ (Settings)</h2>
-          <p className="text-sm text-gray-500 mt-1">แก้ไขข้อมูลส่วนตัว อัปโหลดภาพไปยัง Google Drive และสร้างพิกัดอัตโนมัติ</p>
+          <p className="text-sm text-gray-500 mt-1">แก้ไขข้อมูลส่วนตัว และสร้างพิกัดอัตโนมัติ</p>
         </div>
       </div>
 
@@ -356,124 +357,10 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
             <h3 className="font-bold text-gray-800 flex items-center gap-2">
               <User className="w-5 h-5 text-red-600" /> แก้ไขข้อมูลส่วนตัว (Edit Personal Profile)
             </h3>
-            <p className="text-xs text-gray-400">อัปเดตข้อมูล ชื่อ นามสกุล เบอร์โทรศัพท์ และอัปโหลดภาพโปรไฟล์ฝากไว้ที่ Google Drive</p>
+            <p className="text-xs text-gray-400">อัปเดตข้อมูล ชื่อ นามสกุล และเบอร์โทรศัพท์ของคุณ</p>
 
             <form onSubmit={handleUpdateProfile} className="space-y-4">
               
-              {/* Profile Avatar Preview & Select */}
-              <div className="flex flex-col sm:flex-row items-center gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                <div className="shrink-0 relative">
-                  {profileAvatar ? (
-                    <img
-                      src={profileAvatar}
-                      alt="avatar-preview"
-                      className="w-20 h-20 rounded-2xl object-cover border-2 border-white shadow-md bg-white"
-                      referrerPolicy="no-referrer"
-                    />
-                  ) : (
-                    <div className="w-20 h-20 rounded-2xl bg-slate-200 border-2 border-white shadow-md flex items-center justify-center text-xs text-slate-400 font-bold uppercase text-center p-1">
-                      ไม่มีภาพ
-                    </div>
-                  )}
-                  {profileAvatar && profileAvatar.includes("google") && (
-                    <span className="absolute -bottom-1.5 -right-1.5 bg-blue-600 text-white p-0.5 rounded-full text-[8px] font-bold shadow-xs border border-white" title="ฝากไฟล์ไว้ที่ Google Drive">
-                      GD
-                    </span>
-                  )}
-                </div>
-                
-                <div className="flex-1 space-y-2 text-center sm:text-left w-full">
-                  <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">ภาพโปรไฟล์ของคุณ</span>
-                  
-                  {/* Google Drive Upload Area */}
-                  <div className="space-y-1.5">
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={handleFileChangeAndUpload}
-                      id="google-drive-uploader"
-                      className="hidden"
-                      disabled={isDriveUploading}
-                    />
-                    <label
-                      htmlFor="google-drive-uploader"
-                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold transition cursor-pointer shadow-2xs ${
-                        isDriveUploading
-                          ? "bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed"
-                          : driveToken
-                          ? "bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100"
-                          : "bg-red-50 border-red-200 text-red-600 hover:bg-red-100/70"
-                      }`}
-                    >
-                      {isDriveUploading ? (
-                        <>
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          <span>กำลังอัปโหลดไปยัง Google Drive...</span>
-                        </>
-                      ) : (
-                        <>
-                          <UploadCloud className="w-3.5 h-3.5" />
-                          <span>{driveToken ? "อัปโหลดภาพไปที่ Google Drive" : "เชื่อมต่อ & อัปโหลดภาพไป Google Drive"}</span>
-                        </>
-                      )}
-                    </label>
-
-                    {driveToken && (
-                      <div className="flex items-center gap-1 text-[10px] text-emerald-600 font-bold justify-center sm:justify-start">
-                        <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                        <span>เชื่อมโยงสิทธิ์บัญชี Google Drive สำเร็จ</span>
-                      </div>
-                    )}
-
-                    {driveUploadError && (
-                      <p className="text-[10px] text-red-500 font-medium">{driveUploadError}</p>
-                    )}
-
-                    {showPopupWarning && (
-                      <div className="mt-3 bg-amber-50 border border-amber-200 rounded-xl p-3 text-amber-800 space-y-2 text-[10px] leading-relaxed text-left">
-                        <p className="font-bold text-amber-900 flex items-center gap-1">
-                          <span>⚠️ เบราว์เซอร์บล็อกป๊อปอัพ (Popup Blocked)</span>
-                        </p>
-                        <p>
-                          เนื่องจากหน้าทดสอบนี้ทำงานอยู่ภายใต้ iFrame ของ AI Studio บัญชี Google จึงอาจบล็อกป๊อปอัพเพื่อความปลอดภัย
-                        </p>
-                        <p className="font-bold text-amber-950">
-                          วิธีแก้ไข: โปรดคลิกเปิดลิงก์ด้านล่างเพื่อรันระบบในแท็บใหม่ จะสามารถเชื่อมต่อสิทธิ์ Google Drive และอัปโหลดได้ 100%!
-                        </p>
-                        <a
-                          href={window.location.href}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center justify-center gap-1 bg-amber-600 hover:bg-amber-700 text-white font-bold py-1 px-3 rounded-lg transition"
-                        >
-                          เปิดระบบในแท็บใหม่ (Open in New Tab)
-                        </a>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="pt-1.5 border-t border-slate-200/50">
-                    <span className="text-[9px] text-slate-400 font-medium block">หรือเลือกภาพสำเร็จรูปด่วน:</span>
-                    <div className="flex flex-wrap gap-1 justify-center sm:justify-start mt-1">
-                      {presetAvatars.map((avatar, idx) => (
-                        <button
-                          key={idx}
-                          type="button"
-                          onClick={() => setProfileAvatar(avatar.url)}
-                          className={`px-1.5 py-0.5 text-[9px] font-bold rounded-lg border transition cursor-pointer flex items-center gap-0.5 ${
-                            profileAvatar === avatar.url
-                              ? "bg-red-50 border-red-500 text-red-600"
-                              : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
-                          }`}
-                        >
-                          <span>{avatar.name}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-semibold text-gray-600 block">ชื่อจริง</label>
@@ -511,20 +398,6 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
                       onChange={(e) => setProfilePhone(e.target.value.replace(/[^\d+-\s]/g, ""))}
                       placeholder="เช่น 089-123-4567"
                       className="w-full pl-9 pr-3 py-2 border rounded-xl text-xs focus:ring-1 focus:ring-red-500 font-mono"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-xs font-semibold text-gray-600 block">ลิงก์รูปภาพโปรไฟล์ (Image URL)</label>
-                  <div className="relative mt-1">
-                    <Image className="w-3.5 h-3.5 absolute left-3 top-3 text-slate-400" />
-                    <input
-                      type="url"
-                      value={profileAvatar}
-                      onChange={(e) => setProfileAvatar(e.target.value)}
-                      placeholder="วาง URL รูปภาพโปรไฟล์ของคุณที่นี่ หรือใช้ปุ่มอัปโหลดด้านบน"
-                      className="w-full pl-9 pr-3 py-2 border rounded-xl text-[11px] focus:ring-1 focus:ring-red-500 font-mono"
                     />
                   </div>
                 </div>
@@ -653,6 +526,32 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
                   </div>
                 </div>
 
+                {/* Quick Presets Row */}
+                <div className="flex flex-wrap gap-2 items-center bg-gray-50 p-2.5 rounded-xl border border-gray-100">
+                  <span className="text-[10px] text-gray-500 font-semibold">ปุ่มลัดระบุ Prefix ด่วน:</span>
+                  {["CTC", "WIP", "FG", "DIT", "GMT"].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => {
+                        setLocPrefix(preset);
+                        setLocStart(0);
+                        setLocEnd(12);
+                      }}
+                      className="text-[10px] bg-red-50 hover:bg-red-100 text-red-600 border border-red-200/50 px-2 py-0.5 rounded-md font-extrabold transition cursor-pointer"
+                    >
+                      {preset} (00-12)
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={handleQuickCreateDitGmt}
+                    className="text-[10px] bg-red-600 hover:bg-red-700 text-white px-2.5 py-1 rounded-md font-extrabold transition ml-auto flex items-center gap-1 cursor-pointer"
+                  >
+                    ⚡ สร้างชุด DIT + GMT ทั้งหมดด่วน
+                  </button>
+                </div>
+
                 <button
                   type="submit"
                   disabled={batchLoading}
@@ -688,12 +587,13 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
                       <th className="py-2.5 px-3 text-center">สิ้นสุด</th>
                       <th className="py-2.5 px-3 text-center">รวมที่สร้าง</th>
                       <th className="py-2.5 px-3">ผู้บันทึก</th>
+                      <th className="py-2.5 px-3 text-center w-24">จัดการ</th>
                     </tr>
                   </thead>
                   <tbody>
                     {batches.length === 0 ? (
                       <tr>
-                        <td colSpan={5} className="py-8 text-center text-slate-400 italic bg-slate-50/20 rounded-b-xl">
+                        <td colSpan={6} className="py-8 text-center text-slate-400 italic bg-slate-50/20 rounded-b-xl">
                           ยังไม่มีประวัติการจัดสร้างในระบบคลาวด์
                         </td>
                       </tr>
@@ -710,6 +610,22 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
                           </td>
                           <td className="py-2 px-3 text-slate-500 truncate max-w-[100px]" title={batchItem.createdBy}>
                             {batchItem.createdBy || "System"}
+                          </td>
+                          <td className="py-2 px-3 text-center flex items-center justify-center gap-1.5">
+                            <button
+                              onClick={() => handleStartEditBatch(batchItem)}
+                              className="bg-gray-50 hover:bg-gray-100 text-gray-700 px-2 py-1 rounded border border-gray-200 text-[10px] font-bold transition cursor-pointer"
+                              title="แก้ไขพิกัด"
+                            >
+                              แก้ไข
+                            </button>
+                            <button
+                              onClick={() => handleDeleteBatch(batchItem)}
+                              className="bg-red-50 hover:bg-red-100 text-red-600 px-2 py-1 rounded border border-red-200/30 text-[10px] font-bold transition cursor-pointer"
+                              title="ลบพิกัด"
+                            >
+                              ลบ
+                            </button>
                           </td>
                         </tr>
                       ))
@@ -748,6 +664,74 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
           </div>
         </div>
       </div>
+
+      {/* EDIT LOCATION BATCH MODAL */}
+      {editingBatch && (
+        <div className="fixed inset-0 z-[130] bg-black/60 flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl border border-gray-100 p-6 space-y-4 text-xs">
+            <h3 className="font-extrabold text-gray-800 text-sm flex items-center gap-1.5 border-b pb-2">
+              <Compass className="w-4 h-4 text-red-600 animate-spin" /> แก้ไขชุดรหัสพิกัดจัดเก็บ (Edit Location Batch)
+            </h3>
+            <p className="text-[11px] text-gray-400 leading-relaxed">
+              *การแก้ไขจะทำการลบพิกัดตำแหน่งของชุดนี้เดิมออกทั้งหมด และสร้างใหม่ตามพารามิเตอร์ด้านล่างนี้โดยอัตโนมัติ
+            </p>
+
+            <form onSubmit={handleUpdateBatch} className="space-y-4">
+              <div>
+                <label className="font-bold text-gray-600">Prefix คำนำหน้า</label>
+                <input
+                  type="text"
+                  required
+                  value={editPrefix}
+                  onChange={(e) => setEditPrefix(e.target.value)}
+                  className="w-full mt-1 p-2 border rounded-lg font-bold uppercase"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="font-bold text-gray-600">เลขดัชนีเริ่มต้น</label>
+                  <input
+                    type="number"
+                    min={0}
+                    required
+                    value={editStart}
+                    onChange={(e) => setEditStart(Number(e.target.value))}
+                    className="w-full mt-1 p-2 border rounded-lg text-center"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-gray-600">เลขดัชนีสิ้นสุด</label>
+                  <input
+                    type="number"
+                    min={0}
+                    required
+                    value={editEnd}
+                    onChange={(e) => setEditEnd(Number(e.target.value))}
+                    className="w-full mt-1 p-2 border rounded-lg text-center"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-2 text-xs font-semibold">
+                <button
+                  type="button"
+                  onClick={() => setEditingBatch(null)}
+                  className="flex-1 px-4 py-2 border rounded-xl hover:bg-gray-50 transition cursor-pointer text-gray-600 text-center"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-xl hover:bg-red-700 transition font-bold cursor-pointer text-center"
+                >
+                  บันทึกการแก้ไข
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

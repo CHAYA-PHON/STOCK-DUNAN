@@ -2,13 +2,17 @@ import { useState, useEffect } from "react";
 import { collection, onSnapshot, query, getDocs } from "firebase/firestore";
 import { db } from "../firebase";
 import { Product, InventoryTransaction } from "../types";
-import { TrendingUp, ArrowDownRight, ArrowUpRight, Inbox, Clock, Calendar, ShieldCheck } from "lucide-react";
+import { 
+  TrendingUp, ArrowDownRight, ArrowUpRight, Inbox, Clock, Calendar, 
+  ShieldCheck, BarChart3, Layers, ArrowUpCircle, ArrowDownCircle 
+} from "lucide-react";
 
 export default function DashboardView() {
   const [products, setProducts] = useState<Product[]>([]);
   const [transactions, setTransactions] = useState<InventoryTransaction[]>([]);
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1); // 1-12
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+  const [hoveredDayIndex, setHoveredDayIndex] = useState<number | null>(null);
 
   // Real-time stock listener
   useEffect(() => {
@@ -67,7 +71,7 @@ export default function DashboardView() {
   };
 
   // Metric summaries
-  const totalCurrentStock = products.reduce((acc, p) => acc + (p.stock || 0), 0);
+  const totalCurrentStock: number = products.reduce((acc: number, p: Product) => acc + (p.stock || 0), 0);
 
   // Daily totals
   const { start: dayStart, end: dayEnd } = getDailyBoundaries();
@@ -88,6 +92,70 @@ export default function DashboardView() {
   const monthlyOut = transactions
     .filter((t) => t.type === "out" && t.timestamp >= monthStart && t.timestamp <= monthEnd)
     .reduce((acc, t) => acc + (t.qty || 0), 0);
+
+  // Get last 7 operational days trend data
+  const getPastOperationalDays = (count = 7) => {
+    const daysData = [];
+    const now = new Date();
+    
+    // Thai month abbreviation
+    const thaiAbbrMonths = [
+      "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.",
+      "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."
+    ];
+
+    for (let i = count - 1; i >= 0; i--) {
+      const targetDay = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+      const currentActual830 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 8, 30, 0, 0);
+      const isBeforeCutoffToday = now < currentActual830;
+      
+      const shift = isBeforeCutoffToday ? -1 : 0;
+      const baseDay = new Date(targetDay.getFullYear(), targetDay.getMonth(), targetDay.getDate() + shift);
+      
+      const start = new Date(baseDay.getFullYear(), baseDay.getMonth(), baseDay.getDate(), 8, 30, 0, 0);
+      const end = new Date(baseDay.getFullYear(), baseDay.getMonth(), baseDay.getDate() + 1, 8, 29, 59, 999);
+      
+      const dayLabel = `${baseDay.getDate()} ${thaiAbbrMonths[baseDay.getMonth()]}`;
+      
+      daysData.push({
+        start,
+        end,
+        label: dayLabel,
+        in: 0,
+        out: 0,
+      });
+    }
+    
+    return daysData;
+  };
+
+  const recentDays = getPastOperationalDays(7);
+  recentDays.forEach((day) => {
+    day.in = transactions
+      .filter((t) => t.type === "in" && t.timestamp >= day.start && t.timestamp <= day.end)
+      .reduce((acc, t) => acc + (t.qty || 0), 0);
+      
+    day.out = transactions
+      .filter((t) => t.type === "out" && t.timestamp >= day.start && t.timestamp <= day.end)
+      .reduce((acc, t) => acc + (t.qty || 0), 0);
+  });
+
+  // Find max value in past 7 days to scale the bar chart
+  const maxVal = Math.max(...recentDays.flatMap((d) => [d.in, d.out]), 100);
+
+  // Group current products stock by customer
+  const customerStocks = products.reduce((acc: { [key: string]: number }, p: Product) => {
+    const cust = p.customer?.trim() || "ทั่วไป (General)";
+    acc[cust] = (acc[cust] || 0) + (p.stock || 0);
+    return acc;
+  }, {});
+
+  const sortedCustomerStocks = Object.entries(customerStocks)
+    .map(([name, stock]: [string, number]) => {
+      const percentage = totalCurrentStock > 0 ? (stock / totalCurrentStock) * 100 : 0;
+      return { name, stock: Number(stock), percentage: Number(percentage) };
+    })
+    .sort((a, b) => Number(b.stock) - Number(a.stock));
 
   // Years for dropdown
   const years = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - 2 + i);
@@ -238,6 +306,147 @@ export default function DashboardView() {
                 />
               </div>
             </div>
+          </div>
+        </div>
+
+        {/* Current Inventory Counts by Customer */}
+        <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col justify-between min-h-[360px]">
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <div className="w-8 h-8 rounded-lg bg-red-50 flex items-center justify-center text-red-600">
+                <Layers className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-800 text-sm">ยอดคงคลังแยกตามแบรนด์/ลูกค้า (Customer Stock Breakdown)</h3>
+                <p className="text-[11px] text-slate-400">สัดส่วนและปริมาณสินค้าสะสมแยกตามกลุ่มลูกค้าผู้สั่งผลิต</p>
+              </div>
+            </div>
+
+            <div className="mt-5 max-h-[220px] overflow-y-auto space-y-3.5 pr-1 scrollbar-thin">
+              {sortedCustomerStocks.length === 0 ? (
+                <div className="py-12 text-center text-slate-400 italic text-xs">
+                  ไม่มีข้อมูลจำนวนสินค้าในระบบคลัง
+                </div>
+              ) : (
+                sortedCustomerStocks.map((item, idx) => (
+                  <div key={idx} className="space-y-1.5">
+                    <div className="flex justify-between items-center text-xs font-semibold">
+                      <span className="text-slate-700">{item.name}</span>
+                      <span className="font-mono text-slate-900">
+                        {item.stock.toLocaleString()} <span className="text-slate-400 text-[10px]">PCS</span>
+                        <span className="text-slate-400 text-[10px] ml-1.5 font-sans">({item.percentage.toFixed(1)}%)</span>
+                      </span>
+                    </div>
+                    <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                      <div
+                        style={{ width: `${item.percentage}%` }}
+                        className="h-full bg-gradient-to-r from-red-500 to-red-600 rounded-full transition-all duration-500"
+                      />
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+          <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400">
+            <span>คำนวณจากยอด Opening + In - Out สะสม</span>
+            <span className="font-bold text-slate-500">รวม {sortedCustomerStocks.length} รายการ</span>
+          </div>
+        </div>
+
+        {/* 7-Day Movement Trends Bar Chart */}
+        <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col justify-between min-h-[360px]">
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <div className="w-8 h-8 rounded-lg bg-green-50 flex items-center justify-center text-green-600">
+                <BarChart3 className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-800 text-sm">แนวโน้มการเคลื่อนไหวสต็อก 7 วันที่ผ่านมา (7-Day Trends)</h3>
+                <p className="text-[11px] text-slate-400">ปริมาณการนำเข้า (Stock In) และการโอนออก (Stock Out) รายวัน</p>
+              </div>
+            </div>
+
+            {/* Interactive Dynamic Detail Display */}
+            <div className="mt-4 grid grid-cols-3 gap-2 bg-slate-50/70 p-2.5 rounded-xl border border-slate-100/50 text-center">
+              <div className="text-left flex flex-col justify-center pl-1">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">ช่วงเวลา</span>
+                <span className="text-[11px] font-extrabold text-slate-700 truncate block mt-0.5">
+                  {hoveredDayIndex !== null ? recentDays[hoveredDayIndex].label : "รวม 7 วันล่าสุด"}
+                </span>
+              </div>
+              <div className="bg-white/80 p-1.5 rounded-lg border border-slate-100">
+                <span className="text-[9px] font-bold text-green-600 uppercase tracking-wide block">รับเข้า (In)</span>
+                <span className="text-[12px] font-black text-green-600 block mt-0.5 font-mono">
+                  +{ (hoveredDayIndex !== null ? recentDays[hoveredDayIndex].in : recentDays.reduce((s, d) => s + d.in, 0)).toLocaleString() }
+                </span>
+              </div>
+              <div className="bg-white/80 p-1.5 rounded-lg border border-slate-100">
+                <span className="text-[9px] font-bold text-red-500 uppercase tracking-wide block">โอนออก (Out)</span>
+                <span className="text-[12px] font-black text-red-500 block mt-0.5 font-mono">
+                  -{ (hoveredDayIndex !== null ? recentDays[hoveredDayIndex].out : recentDays.reduce((s, d) => s + d.out, 0)).toLocaleString() }
+                </span>
+              </div>
+            </div>
+
+            {/* Custom SVG/HTML Bar Chart Visualization */}
+            <div className="mt-4 h-[150px] w-full flex items-end justify-between px-1.5 pb-2 pt-6 bg-slate-50/30 rounded-xl border border-slate-100/50 relative">
+              {recentDays.map((day, idx) => {
+                const inPct = maxVal > 0 ? (day.in / maxVal) * 100 : 0;
+                const outPct = maxVal > 0 ? (day.out / maxVal) * 100 : 0;
+                const isHovered = hoveredDayIndex === idx;
+
+                return (
+                  <div
+                    key={idx}
+                    className="flex-1 flex flex-col items-center group relative cursor-pointer"
+                    onMouseEnter={() => setHoveredDayIndex(idx)}
+                    onMouseLeave={() => setHoveredDayIndex(null)}
+                  >
+                    {/* Bars Container */}
+                    <div className="flex items-end justify-center gap-1 h-[95px] w-full relative">
+                      {/* In Bar (Green) */}
+                      <div
+                        style={{ height: `${Math.max(inPct, 2)}%` }}
+                        className={`w-2.5 sm:w-3 bg-green-500 rounded-t-sm transition-all duration-300 ease-out hover:bg-green-600 ${
+                          isHovered ? "shadow-xs ring-1 ring-white" : "opacity-90"
+                        }`}
+                      />
+                      {/* Out Bar (Red) */}
+                      <div
+                        style={{ height: `${Math.max(outPct, 2)}%` }}
+                        className={`w-2.5 sm:w-3 bg-red-500 rounded-t-sm transition-all duration-300 ease-out hover:bg-red-600 ${
+                          isHovered ? "shadow-xs ring-1 ring-white" : "opacity-90"
+                        }`}
+                      />
+                    </div>
+
+                    {/* Date Label */}
+                    <span
+                      className={`text-[9px] font-bold mt-1.5 font-mono transition-colors duration-200 ${
+                        isHovered ? "text-slate-900 font-extrabold" : "text-slate-400"
+                      }`}
+                    >
+                      {day.label}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400">
+            <div className="flex items-center gap-3">
+              <span className="flex items-center gap-1 font-medium">
+                <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
+                รับเข้า (Stock In)
+              </span>
+              <span className="flex items-center gap-1 font-medium">
+                <span className="w-2 h-2 rounded-full bg-red-500 inline-block" />
+                โอนออก (Stock Out)
+              </span>
+            </div>
+            <span className="italic text-[10px]">วางเมาส์ที่แท่งกราฟเพื่อดูยอดรายวัน</span>
           </div>
         </div>
 

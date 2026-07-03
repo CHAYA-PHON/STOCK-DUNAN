@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from "react";
-import { collection, onSnapshot, doc, setDoc, updateDoc } from "firebase/firestore";
+import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import { Product } from "../types";
 import { fuzzySearch } from "../utils/fuzzy";
 import { getSafeProductId } from "../utils/productUtils";
 import * as XLSX from "xlsx";
-import { Search, FileSpreadsheet, Package, Upload, HelpCircle, Edit3, Save, Check, Clipboard, X, PlusCircle } from "lucide-react";
+import { Search, FileSpreadsheet, Package, Upload, HelpCircle, Edit3, Save, Check, Clipboard, X, PlusCircle, Trash2, Edit } from "lucide-react";
+import { BOX_SIZE_OPTIONS, getRecommendedBoxSizes } from "../utils/boxSizeUtils";
 
 export default function ProductsView() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -28,11 +29,119 @@ export default function ProductsView() {
   const [newZone, setNewZone] = useState("-");
   const [newFullBox, setNewFullBox] = useState<number>(0);
   const [newPkgType, setNewPkgType] = useState("BOX");
+  const [newBoxSize, setNewBoxSize] = useState("");
   const [newOpeningStock, setNewOpeningStock] = useState<number>(0);
 
   // Inline edit state for box size fallback
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingBoxValue, setEditingBoxValue] = useState<number>(0);
+
+  // Product edit modal states
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [editCust, setEditCust] = useState("");
+  const [editPartNo, setEditPartNo] = useState("");
+  const [editPartName, setEditPartName] = useState("");
+  const [editSapNo, setEditSapNo] = useState("");
+  const [editZone, setEditZone] = useState("");
+  const [editFullBox, setEditFullBox] = useState<number>(0);
+  const [editPkgType, setEditPkgType] = useState("");
+  const [editBoxSize, setEditBoxSize] = useState("");
+  const [editOpeningStock, setEditOpeningStock] = useState<number>(0);
+
+  const handleOpenEditModal = (prod: Product) => {
+    setEditingProduct(prod);
+    setEditCust(prod.customer || "");
+    setEditPartNo(prod.partNo || "");
+    setEditPartName(prod.partName || "");
+    setEditSapNo(prod.sapNo || "-");
+    setEditZone(prod.zone || "-");
+    setEditFullBox(prod.fullBox || 0);
+    setEditPkgType(prod.packageType || "BOX");
+    setEditBoxSize(prod.boxSize || "");
+    setEditOpeningStock(prod.openingStock || 0);
+    setShowEditModal(true);
+  };
+
+  const handleSaveProductEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingProduct) return;
+
+    if (!editCust.trim() || !editPartNo.trim()) {
+      alert("กรุณากรอกข้อมูลลูกค้าและพาร์ทสินค้า");
+      return;
+    }
+
+    const customerVal = editCust.trim().toUpperCase();
+    const partNoVal = editPartNo.trim();
+    const compositeId = getSafeProductId(customerVal, partNoVal);
+
+    try {
+      // If customer or partNo changed, we need to create a new doc and delete the old one
+      if (compositeId !== editingProduct.id) {
+        const doubleCheck = products.some((p) => p.id === compositeId);
+        if (doubleCheck) {
+          alert(`ไม่สามารถแก้ไขเป็นคีย์ลูกค้านี้ได้ เนื่องจากมีพาร์ท ${partNoVal} ของลูกค้า ${customerVal} ในระบบอยู่แล้ว`);
+          return;
+        }
+
+        // Create new
+        const newProductDoc: Product = {
+          id: compositeId,
+          customer: customerVal,
+          partNo: partNoVal,
+          partName: editPartName.trim() || `${customerVal} ${partNoVal}`,
+          sapNo: editSapNo.trim(),
+          zone: editZone.trim(),
+          fullBox: editFullBox,
+          packageType: editPkgType.trim() || "BOX",
+          boxSize: editBoxSize.trim(),
+          openingStock: editOpeningStock,
+          receivedTotal: editingProduct.receivedTotal || 0,
+          shippedTotal: editingProduct.shippedTotal || 0,
+          stock: editOpeningStock + (editingProduct.receivedTotal || 0) - (editingProduct.shippedTotal || 0),
+        };
+
+        await setDoc(doc(db, "products", compositeId), newProductDoc);
+        // Delete old
+        await deleteDoc(doc(db, "products", editingProduct.id));
+      } else {
+        // Just update existing
+        const ref = doc(db, "products", editingProduct.id);
+        const updatedFields = {
+          partName: editPartName.trim() || `${customerVal} ${partNoVal}`,
+          sapNo: editSapNo.trim(),
+          zone: editZone.trim(),
+          fullBox: editFullBox,
+          packageType: editPkgType.trim() || "BOX",
+          boxSize: editBoxSize.trim(),
+          openingStock: editOpeningStock,
+          stock: editOpeningStock + (editingProduct.receivedTotal || 0) - (editingProduct.shippedTotal || 0),
+        };
+        await updateDoc(ref, updatedFields);
+      }
+
+      alert("แก้ไขข้อมูลสินค้าสำเร็จเรียบร้อย!");
+      setShowEditModal(false);
+      setEditingProduct(null);
+    } catch (err) {
+      console.error(err);
+      alert("เกิดข้อผิดพลาดในการแก้ไขข้อมูลสินค้า");
+    }
+  };
+
+  const handleDeleteProduct = async (prod: Product) => {
+    const confirmDelete = window.confirm(`คุณแน่ใจหรือไม่ที่จะลบสินค้าพาร์ท "${prod.partNo}" ของลูกค้า "${prod.customer}" ออกจากระบบ?\n\n*คำเตือน: การลบข้อมูลสินค้าจะไม่ลบประวัติการรับเข้า/โอนออกย้อนหลัง แต่อาจส่งผลให้รายงานทำงานผิดปกติหากมีการสืบค้นภายหลัง`);
+    if (!confirmDelete) return;
+
+    try {
+      await deleteDoc(doc(db, "products", prod.id));
+      alert("ลบสินค้าออกจากระบบสำเร็จเรียบร้อย!");
+    } catch (err) {
+      console.error("Error deleting product:", err);
+      alert("เกิดข้อผิดพลาดในการลบสินค้า");
+    }
+  };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -64,6 +173,7 @@ export default function ProductsView() {
         zone: newZone.trim(),
         fullBox: newFullBox,
         packageType: newPkgType.trim() || "BOX",
+        boxSize: newBoxSize.trim(),
         openingStock: newOpeningStock,
         receivedTotal: 0,
         shippedTotal: 0,
@@ -82,6 +192,7 @@ export default function ProductsView() {
       setNewZone("-");
       setNewFullBox(0);
       setNewPkgType("BOX");
+      setNewBoxSize("");
       setNewOpeningStock(0);
     } catch (err) {
       console.error(err);
@@ -200,8 +311,9 @@ export default function ProductsView() {
 
           const sapNo = String(findVal(["sapno", "sap", "รหัสsap"], "-")).trim();
           const zone = String(findVal(["zone", "โซน"], "-")).trim();
-          const fullBox = Number(findVal(["fullbox", "ขนาดกล่อง", "จำนวนต่อกล่อง", "บรรจุ"], 0)) || 0;
+          const fullBox = Number(findVal(["fullbox", "จำนวนต่อกล่อง", "บรรจุ"], 0)) || 0;
           const packageType = String(findVal(["packagetype", "ประเภทกล่อง", "บรรจุภัณฑ์"], "BOX")).trim();
+          const boxSize = String(findVal(["boxsize", "ขนาดกล่อง", "ขนาด"], "")).trim();
           const openingStock = Number(findVal(["beginningstock", "openingstock", "stock", "ยอดยกมา", "สต็อกยอดยกมา"], 0)) || 0;
 
           const compositeId = getSafeProductId(customer, partNo);
@@ -215,6 +327,7 @@ export default function ProductsView() {
             zone,
             fullBox,
             packageType,
+            boxSize,
             openingStock,
             receivedTotal: 0,
             shippedTotal: 0,
@@ -259,8 +372,9 @@ export default function ProductsView() {
       const partNameIdx = headers.findIndex(h => h === "partname" || h === "ชื่อสินค้า" || h === "รายการสินค้า");
       const sapNoIdx = headers.findIndex(h => h === "sapno" || h === "รหัสsap" || h === "sap");
       const zoneIdx = headers.findIndex(h => h === "zone" || h === "โซน");
-      const fullBoxIdx = headers.findIndex(h => h === "fullbox" || h === "ขนาดกล่อง" || h === "จำนวนต่อกล่อง" || h === "บรรจุ");
+      const fullBoxIdx = headers.findIndex(h => h === "fullbox" || h === "จำนวนต่อกล่อง" || h === "บรรจุ");
       const packageTypeIdx = headers.findIndex(h => h === "packagetype" || h === "ประเภทกล่อง" || h === "บรรจุภัณฑ์");
+      const boxSizeIdx = headers.findIndex(h => h === "boxsize" || h === "ขนาดกล่อง" || h === "ขนาด");
       const openingStockIdx = headers.findIndex(h => h === "beginningstock" || h === "openingstock" || h === "stock" || h === "ยอดยกมา" || h === "สต็อกยอดยกมา");
 
       let importedCount = 0;
@@ -282,6 +396,7 @@ export default function ProductsView() {
         const sapNo = (sapNoIdx !== -1 && cols[sapNoIdx] !== undefined ? cols[sapNoIdx] : cols[4])?.trim() || "-";
         const zone = (zoneIdx !== -1 && cols[zoneIdx] !== undefined ? cols[zoneIdx] : cols[5])?.trim() || "-";
         const packageType = (packageTypeIdx !== -1 && cols[packageTypeIdx] !== undefined ? cols[packageTypeIdx] : cols[6])?.trim() || "BOX";
+        const boxSize = (boxSizeIdx !== -1 && cols[boxSizeIdx] !== undefined ? cols[boxSizeIdx] : "")?.trim() || "";
         const openingStock = Number((openingStockIdx !== -1 && cols[openingStockIdx] !== undefined ? cols[openingStockIdx] : cols[7]) || 0) || 0;
 
         const compositeId = getSafeProductId(customer, partNo);
@@ -295,6 +410,7 @@ export default function ProductsView() {
           zone,
           fullBox,
           packageType,
+          boxSize,
           openingStock,
           receivedTotal: 0,
           shippedTotal: 0,
@@ -412,11 +528,13 @@ export default function ProductsView() {
                       <th className="p-4">รหัสสินค้า (Part No)</th>
                       <th className="p-4">รหัส SAP No</th>
                       <th className="p-4">ชื่อสินค้า (Part Name)</th>
-                      <th className="p-4 text-center">ขนาดกล่อง (Full Box)</th>
+                      <th className="p-4 text-center">ขนาดกล่อง (Box Size)</th>
+                      <th className="p-4 text-center">บรรจุ/กล่อง (Full Box)</th>
                       <th className="p-4 text-right">ยอดยกมา</th>
                       <th className="p-4 text-right">รับรวม</th>
                       <th className="p-4 text-right">โอนรวม</th>
                       <th className="p-4 text-right">สต๊อกปัจจุบัน</th>
+                      <th className="p-4 text-center w-24">การจัดการ</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -425,6 +543,15 @@ export default function ProductsView() {
                         <td className="p-4 font-bold text-gray-900">{prod.partNo}</td>
                         <td className="p-4 text-gray-500 font-mono">{prod.sapNo || "-"}</td>
                         <td className="p-4 text-gray-600 max-w-[200px] truncate">{prod.partName}</td>
+                        <td className="p-4 text-center font-semibold text-gray-700">
+                          {prod.boxSize ? (
+                            <span className="bg-slate-100 text-slate-800 text-[10px] px-2 py-0.5 rounded font-bold uppercase">
+                              {prod.boxSize}
+                            </span>
+                          ) : (
+                            <span className="text-gray-300 italic font-normal text-[11px]">-</span>
+                          )}
+                        </td>
                         <td className="p-4 text-center">
                           {editingId === prod.id ? (
                             <div className="flex items-center justify-center gap-1.5">
@@ -468,6 +595,24 @@ export default function ProductsView() {
                           <span className="font-bold text-sm text-gray-900">
                             {(prod.stock ?? (prod.openingStock + (prod.receivedTotal || 0) - (prod.shippedTotal || 0))).toLocaleString()}
                           </span>
+                        </td>
+                        <td className="p-4 text-center">
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              onClick={() => handleOpenEditModal(prod)}
+                              className="bg-blue-50 text-blue-600 p-1.5 rounded-lg hover:bg-blue-100 transition cursor-pointer"
+                              title="แก้ไขสินค้า"
+                            >
+                              <Edit className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteProduct(prod)}
+                              className="bg-red-50 text-red-600 p-1.5 rounded-lg hover:bg-red-100 transition cursor-pointer"
+                              title="ลบสินค้า"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -690,7 +835,7 @@ export default function ProductsView() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-4 gap-3">
                 <div>
                   <label className="text-xs font-semibold text-gray-600 block">ความจุต่อกล่อง (Full Box)</label>
                   <input
@@ -701,6 +846,29 @@ export default function ProductsView() {
                   />
                 </div>
                 
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 block">ขนาดกล่อง (Box Size)</label>
+                  <select
+                    value={newBoxSize}
+                    onChange={(e) => setNewBoxSize(e.target.value)}
+                    className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-red-500 bg-white font-medium"
+                  >
+                    <option value="">-- เลือกขนาดกล่อง --</option>
+                    {newCust.trim() && (
+                      <optgroup label="💡 แนะนำสำหรับลูกค้านี้">
+                        {getRecommendedBoxSizes(newCust).map((sz) => (
+                          <option key={sz} value={sz}>{sz}</option>
+                        ))}
+                      </optgroup>
+                    )}
+                    <optgroup label="📦 ขนาดกล่องทั้งหมด">
+                      {BOX_SIZE_OPTIONS.map((sz) => (
+                        <option key={sz} value={sz}>{sz}</option>
+                      ))}
+                    </optgroup>
+                  </select>
+                </div>
+
                 <div>
                   <label className="text-xs font-semibold text-gray-600 block">ประเภทกล่อง</label>
                   <input
@@ -737,6 +905,175 @@ export default function ProductsView() {
                 className="bg-red-600 hover:bg-red-700 text-white font-bold px-5 py-2 rounded-xl transition cursor-pointer shadow-xs"
               >
                 บันทึกขึ้นทะเบียนสินค้า
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Edit Product Modal */}
+      {showEditModal && editingProduct && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <form
+            onSubmit={handleSaveProductEdit}
+            className="bg-white w-full max-w-xl rounded-3xl overflow-hidden shadow-2xl border border-gray-100 flex flex-col max-h-[90vh]"
+          >
+            {/* Modal Header */}
+            <div className="bg-slate-900 px-6 py-5 text-white flex justify-between items-center">
+              <div>
+                <span className="font-extrabold text-sm flex items-center gap-2">
+                  <Edit3 className="w-5 h-5 text-blue-500 animate-pulse" /> แก้ไขข้อมูลสินค้า (Edit Product Master)
+                </span>
+                <p className="text-[10px] text-slate-400 mt-1">แก้ไขและบันทึกข้อมูลพาร์ทสินค้าลงฐานข้อมูลส่วนกลาง</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowEditModal(false);
+                  setEditingProduct(null);
+                }}
+                className="hover:bg-slate-800 p-1.5 rounded-full text-slate-400 hover:text-white transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto space-y-4 text-xs text-slate-700">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 block">ลูกค้า (Customer) *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="เช่น Haier, Toshiba, Sharp"
+                    value={editCust}
+                    onChange={(e) => setEditCust(e.target.value)}
+                    className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-red-500 bg-white font-bold animate-none"
+                  />
+                  <p className="text-[9px] text-amber-600 mt-1">⚠️ หากเปลี่ยนลูกค้าหรือรหัสสินค้า ระบบจะย้ายข้อมูลไปยังเอกสารรหัสใหม่และลบเอกสารเดิมออกโดยอัตโนมัติ</p>
+                </div>
+                
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 block">รหัสพาร์ทสินค้า (Part No) *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="เช่น 0010724702N"
+                    value={editPartNo}
+                    onChange={(e) => setEditPartNo(e.target.value)}
+                    className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-red-500 bg-white font-bold"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-600 block">ชื่อพาร์ท / รายการสินค้า (Part Name)</label>
+                <input
+                  type="text"
+                  placeholder="เช่น EVAPORATOR ASSY"
+                  value={editPartName}
+                  onChange={(e) => setEditPartName(e.target.value)}
+                  className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-red-500 bg-white"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 block">รหัส SAP (SAP No)</label>
+                  <input
+                    type="text"
+                    value={editSapNo}
+                    onChange={(e) => setEditSapNo(e.target.value)}
+                    className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-red-500 bg-white"
+                  />
+                </div>
+                
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 block">โซนการจัดเก็บ (Zone)</label>
+                  <input
+                    type="text"
+                    value={editZone}
+                    onChange={(e) => setEditZone(e.target.value)}
+                    className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-red-500 bg-white"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-4 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 block">ความจุต่อกล่อง (Full Box)</label>
+                  <input
+                    type="number"
+                    value={editFullBox}
+                    onChange={(e) => setEditFullBox(Number(e.target.value))}
+                    className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-red-500 bg-white"
+                  />
+                </div>
+                
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 block">ขนาดกล่อง (Box Size)</label>
+                  <select
+                    value={editBoxSize}
+                    onChange={(e) => setEditBoxSize(e.target.value)}
+                    className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-red-500 bg-white font-medium"
+                  >
+                    <option value="">-- เลือกขนาดกล่อง --</option>
+                    {editCust.trim() && (
+                      <optgroup label="💡 แนะนำสำหรับลูกค้านี้">
+                        {getRecommendedBoxSizes(editCust).map((sz) => (
+                          <option key={sz} value={sz}>{sz}</option>
+                        ))}
+                      </optgroup>
+                    )}
+                    <optgroup label="📦 ขนาดกล่องทั้งหมด">
+                      {BOX_SIZE_OPTIONS.map((sz) => (
+                        <option key={sz} value={sz}>{sz}</option>
+                      ))}
+                    </optgroup>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 block">ประเภทกล่อง</label>
+                  <input
+                    type="text"
+                    value={editPkgType}
+                    onChange={(e) => setEditPkgType(e.target.value)}
+                    className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-red-500 bg-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 block">ยอดยกมา (Opening Stock)</label>
+                  <input
+                    type="number"
+                    value={editOpeningStock}
+                    onChange={(e) => setEditOpeningStock(Number(e.target.value))}
+                    className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-red-500 bg-white"
+                  />
+                  <p className="text-[9px] text-gray-400 mt-1">สต๊อกปัจจุบันจะถูกคำนวณใหม่โดยอัตโนมัติ</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="bg-slate-50 px-6 py-4 border-t border-slate-100 flex justify-end gap-2 text-xs font-semibold">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowEditModal(false);
+                  setEditingProduct(null);
+                }}
+                className="px-4 py-2 border border-slate-200 hover:bg-slate-100 text-slate-600 rounded-xl transition cursor-pointer"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="submit"
+                className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-5 py-2 rounded-xl transition cursor-pointer shadow-xs"
+              >
+                บันทึกการแก้ไข
               </button>
             </div>
           </form>

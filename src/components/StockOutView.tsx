@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from "react";
-import { collection, onSnapshot, doc, getDoc, getDocs, query, where, writeBatch, setDoc } from "firebase/firestore";
+import { collection, onSnapshot, doc, getDoc, getDocs, query, where, writeBatch, setDoc, addDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import { Product, Employee, InventoryTransaction, LocationItem, AdjustRequest } from "../types";
 import { fuzzySearch } from "../utils/fuzzy";
 import { getSafeProductId } from "../utils/productUtils";
 import { QRScannerModal } from "./index";
-import { Search, Tag, Trash2, ArrowUpRight, AlertTriangle, RefreshCw, Send, CheckCircle } from "lucide-react";
+import { Search, Tag, Trash2, ArrowUpRight, AlertTriangle, RefreshCw, Send, CheckCircle, Save, Plus } from "lucide-react";
+import { BOX_SIZE_OPTIONS, getRecommendedBoxSizes, getCustomerGroup, DEFAULT_BOI_CUSTOMERS, BOICustomer } from "../utils/boxSizeUtils";
 
 interface StockOutViewProps {
   currentUser: Employee | null;
@@ -31,6 +32,18 @@ export default function StockOutView({ currentUser }: StockOutViewProps) {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [fuzzyResults, setFuzzyResults] = useState<Product[]>([]);
   const [editFullBox, setEditFullBox] = useState<number>(0);
+  const [boxSize, setBoxSize] = useState("");
+
+  // BOI Customer States
+  const [boiCustomers, setBoiCustomers] = useState<BOICustomer[]>([]);
+  const [selectedBoiSubCustomer, setSelectedBoiSubCustomer] = useState("");
+  const [isAddingBoi, setIsAddingBoi] = useState(false);
+  const [newBoiName, setNewBoiName] = useState("");
+  const [newBoiGroup, setNewBoiGroup] = useState<"CTC" | "อื่นๆ">("CTC");
+
+  // Custom box size states
+  const [isCustomBoxSize, setIsCustomBoxSize] = useState(false);
+  const [customBoxSizeInput, setCustomBoxSizeInput] = useState("");
 
   // Queue List
   const [queue, setQueue] = useState<Omit<InventoryTransaction, "id" | "timestamp">[]>([]);
@@ -38,6 +51,8 @@ export default function StockOutView({ currentUser }: StockOutViewProps) {
   // Modals & Triggers
   const [scannerOpen, setScannerOpen] = useState(false);
   const [scannerTarget, setScannerTarget] = useState<"part" | "label">("part");
+  const [isPartFocused, setIsPartFocused] = useState(false);
+  const [isLabelFocused, setIsLabelFocused] = useState(false);
 
   // Negative Stock Override State
   const [negativeError, setNegativeError] = useState<{
@@ -73,10 +88,27 @@ export default function StockOutView({ currentUser }: StockOutViewProps) {
       }
     });
 
+    // Fetch BOI Sub Customers
+    const unsubBoi = onSnapshot(collection(db, "boi_sub_customers"), (snap) => {
+      if (snap.empty) {
+        // Pre-populate with default ones
+        DEFAULT_BOI_CUSTOMERS.forEach((c) => {
+          addDoc(collection(db, "boi_sub_customers"), c);
+        });
+      } else {
+        const items: BOICustomer[] = [];
+        snap.forEach((doc) => {
+          items.push({ id: doc.id, ...doc.data() } as BOICustomer);
+        });
+        setBoiCustomers(items);
+      }
+    });
+
     return () => {
       unsubProds();
       unsubLocs();
       unsubSettings();
+      unsubBoi();
     };
   }, []);
 
@@ -94,7 +126,7 @@ export default function StockOutView({ currentUser }: StockOutViewProps) {
   // Monitor Label ID inputs: if user types or scans Label ID, check if it matches prior IN log
   useEffect(() => {
     const label = labelId.trim();
-    if (!label || label.length < 5) return;
+    if (!label || label.length < 2) return;
 
     const resolveLabel = async () => {
       try {
@@ -105,12 +137,56 @@ export default function StockOutView({ currentUser }: StockOutViewProps) {
           const firstIn = snap.docs[0].data() as InventoryTransaction;
           const compositeId = getSafeProductId(firstIn.customer, firstIn.partNo);
           const prodDoc = await getDoc(doc(db, "products", compositeId));
+          
+          if (firstIn.subCustomer) {
+            setSelectedBoiSubCustomer(firstIn.subCustomer);
+          } else {
+            setSelectedBoiSubCustomer("");
+          }
+
           if (prodDoc.exists()) {
             const prod = { id: prodDoc.id, ...prodDoc.data() } as Product;
             setSelectedProduct(prod);
             setQty(firstIn.qty);
-            setEditFullBox(prod.fullBox);
+            setEditFullBox(prod.fullBox || 0);
+            
+            const bs = prod.boxSize || "";
+            setBoxSize(bs);
+            if (bs && !BOX_SIZE_OPTIONS.includes(bs)) {
+              setIsCustomBoxSize(true);
+              setCustomBoxSizeInput(bs);
+            } else {
+              setIsCustomBoxSize(false);
+              setCustomBoxSizeInput("");
+            }
+
             setPartSearch(prod.partNo);
+          } else {
+            // Fallback product master if it doesn't exist anymore
+            const fallbackProd: Product = {
+              id: compositeId,
+              partNo: firstIn.partNo,
+              partName: firstIn.partName || "",
+              customer: firstIn.customer || "",
+              fullBox: 0,
+              packageType: "BOX",
+              sapNo: "-",
+              zone: "-",
+              openingStock: 0,
+              receivedTotal: 0,
+              shippedTotal: 0,
+              stock: 0
+            };
+            setSelectedProduct(fallbackProd);
+            setQty(firstIn.qty);
+            setEditFullBox(0);
+            
+            const bs = "";
+            setBoxSize(bs);
+            setIsCustomBoxSize(false);
+            setCustomBoxSizeInput("");
+
+            setPartSearch(firstIn.partNo);
           }
         }
       } catch (err) {
@@ -142,9 +218,56 @@ export default function StockOutView({ currentUser }: StockOutViewProps) {
     setSelectedProduct(prod);
     setQty(prod.fullBox || 0);
     setEditFullBox(prod.fullBox || 0);
+    const bs = prod.boxSize || "";
+    setBoxSize(bs);
     setFuzzyResults([]);
     setNegativeError(null);
     setAdjustRequestSent(false);
+    setSelectedBoiSubCustomer(""); // reset BOI sub-customer
+
+    if (bs && !BOX_SIZE_OPTIONS.includes(bs)) {
+      setIsCustomBoxSize(true);
+      setCustomBoxSizeInput(bs);
+    } else {
+      setIsCustomBoxSize(false);
+      setCustomBoxSizeInput("");
+    }
+  };
+
+  const handleBoxSizeChange = async (newVal: string) => {
+    if (newVal === "__custom__") {
+      setIsCustomBoxSize(true);
+      setCustomBoxSizeInput("");
+      setBoxSize("");
+      return;
+    }
+    setIsCustomBoxSize(false);
+    setBoxSize(newVal);
+    if (selectedProduct) {
+      try {
+        const prodRef = doc(db, "products", selectedProduct.id);
+        await setDoc(prodRef, { boxSize: newVal }, { merge: true });
+        // Update local state reference
+        setSelectedProduct({ ...selectedProduct, boxSize: newVal });
+      } catch (err) {
+        console.error("Error updating box size in StockOutView:", err);
+      }
+    }
+  };
+
+  const handleCustomBoxSizeSave = async (customVal: string) => {
+    const val = customVal.trim();
+    if (!val) return;
+    setBoxSize(val);
+    if (selectedProduct) {
+      try {
+        const prodRef = doc(db, "products", selectedProduct.id);
+        await setDoc(prodRef, { boxSize: val }, { merge: true });
+        setSelectedProduct({ ...selectedProduct, boxSize: val });
+      } catch (err) {
+        console.error("Error updating custom box size:", err);
+      }
+    }
   };
 
   const handleFullBoxChange = async (newVal: number) => {
@@ -176,11 +299,16 @@ export default function StockOutView({ currentUser }: StockOutViewProps) {
     } else {
       setLabelId(text);
     }
+    setScannerOpen(false); // Close box scanner popup immediately
   };
 
   const handleAddToQueue = () => {
     if (!selectedProduct) {
       alert("กรุณาเลือกสินค้าก่อน");
+      return;
+    }
+    if (selectedProduct.customer.toUpperCase() === "BOI" && !selectedBoiSubCustomer) {
+      alert("กรุณาเลือกชื่อลูกค้าในกลุ่ม BOI");
       return;
     }
     if (qty <= 0) {
@@ -224,6 +352,7 @@ export default function StockOutView({ currentUser }: StockOutViewProps) {
       partNo: selectedProduct.partNo,
       partName: selectedProduct.partName,
       customer: selectedProduct.customer,
+      subCustomer: selectedProduct.customer.toUpperCase() === "BOI" ? (selectedBoiSubCustomer || null) : null,
       type: "out",
       subType,
       qty,
@@ -235,10 +364,10 @@ export default function StockOutView({ currentUser }: StockOutViewProps) {
 
     setQueue([...queue, item]);
 
-    // Reset fields
-    setLabelId("");
-    setPartSearch("");
-    setSelectedProduct(null);
+    // Keep inputs for next item as per user request ("ให้แสดงค่าค้างไว้ หลังจากกดใส่ตะกร้าแล้ว จนกว่าจะกดเปลี่ยน")
+    // setLabelId("");
+    // setPartSearch("");
+    // setSelectedProduct(null);
     setNegativeError(null);
     setAdjustRequestSent(false);
   };
@@ -396,7 +525,20 @@ export default function StockOutView({ currentUser }: StockOutViewProps) {
           {/* Search section */}
           <div className="space-y-3">
             <div>
-              <label className="text-xs font-semibold text-gray-600 block">ค้นหา / สแกนสินค้า</label>
+              <div className="flex justify-between items-center flex-wrap gap-2">
+                <label className="text-xs font-semibold text-gray-600 block">ค้นหา / สแกนสินค้า</label>
+                {isPartFocused ? (
+                  <span className="text-[10px] text-green-600 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full font-bold flex items-center gap-1 animate-pulse">
+                    <span className="h-1.5 w-1.5 rounded-full bg-green-500 animate-ping" />
+                    <span>Ready to Scan (พร้อมสแกน)</span>
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-gray-400 bg-gray-50 border border-gray-200 px-2 py-0.5 rounded-full font-medium flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-gray-300" />
+                    <span>คลิกที่นี่เพื่อรอสแกน</span>
+                  </span>
+                )}
+              </div>
               <div className="flex gap-2 mt-1">
                 <div className="relative flex-1">
                   <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -405,6 +547,8 @@ export default function StockOutView({ currentUser }: StockOutViewProps) {
                     placeholder="ค้นหาด้วยรหัสสินค้า (Fuzzy search)..."
                     value={partSearch}
                     onChange={(e) => setPartSearch(e.target.value)}
+                    onFocus={() => setIsPartFocused(true)}
+                    onBlur={() => setIsPartFocused(false)}
                     className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
                   />
                 </div>
@@ -442,46 +586,251 @@ export default function StockOutView({ currentUser }: StockOutViewProps) {
                     <h4 className="font-bold text-gray-800 text-sm">{selectedProduct.partNo}</h4>
                     <p className="text-xs text-gray-500">{selectedProduct.partName}</p>
                   </div>
-                  <span className="bg-red-600 text-white text-[10px] px-2.5 py-0.5 rounded font-bold uppercase">
-                    คลัง: {selectedProduct.stock || 0}
+                  <div className="flex flex-col items-end gap-1">
+                    <span className="bg-red-600 text-white text-[10px] px-2.5 py-0.5 rounded font-bold uppercase">
+                      คลัง: {selectedProduct.stock || 0}
+                    </span>
+                    <span className="bg-black text-white text-[9px] px-1.5 py-0.5 rounded font-bold uppercase">
+                      {selectedProduct.customer}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* BOI Sub-Customer Selector */}
+            {selectedProduct && selectedProduct.customer.toUpperCase() === "BOI" && (
+              <div className="bg-red-50/50 border border-red-200/60 p-4 rounded-2xl space-y-3">
+                <div className="flex justify-between items-center">
+                  <span className="text-xs font-bold text-red-800 flex items-center gap-1">
+                    💼 ลูกค้าในกลุ่ม BOI (งานซื้อมาขายไป)
                   </span>
+                  <button
+                    type="button"
+                    onClick={() => setIsAddingBoi(!isAddingBoi)}
+                    className="text-[10px] bg-red-600 hover:bg-red-700 text-white font-semibold px-2 py-1 rounded transition flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="w-3 h-3" /> เพิ่มชื่อลูกค้า
+                  </button>
+                </div>
+
+                {isAddingBoi ? (
+                  <div className="bg-white border border-red-100 p-3 rounded-xl space-y-2.5 shadow-sm">
+                    <p className="text-[10px] font-bold text-gray-700">➕ เพิ่มรายชื่อลูกค้า BOI ใหม่</p>
+                    <div>
+                      <input
+                        type="text"
+                        placeholder="ระบุชื่อลูกค้า เช่น SAMBO, AMAKASAKI"
+                        value={newBoiName}
+                        onChange={(e) => setNewBoiName(e.target.value)}
+                        className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs outline-none focus:ring-1 focus:ring-red-500"
+                      />
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-3">
+                        <label className="flex items-center gap-1 text-[11px] text-gray-600 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="boi_group_out"
+                            checked={newBoiGroup === "CTC"}
+                            onChange={() => setNewBoiGroup("CTC")}
+                            className="text-red-600 focus:ring-red-500"
+                          />
+                          กลุ่ม CTC
+                        </label>
+                        <label className="flex items-center gap-1 text-[11px] text-gray-600 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="boi_group_out"
+                            checked={newBoiGroup === "อื่นๆ"}
+                            onChange={() => setNewBoiGroup("อื่นๆ")}
+                            className="text-red-600 focus:ring-red-500"
+                          />
+                          อื่นๆ
+                        </label>
+                      </div>
+                      <div className="flex gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setIsAddingBoi(false)}
+                          className="text-[10px] text-gray-500 bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded font-medium"
+                        >
+                          ยกเลิก
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (!newBoiName.trim()) {
+                              alert("กรุณากรอกชื่อลูกค้า");
+                              return;
+                            }
+                            try {
+                              await addDoc(collection(db, "boi_sub_customers"), {
+                                name: newBoiName.trim().toUpperCase(),
+                                group: newBoiGroup
+                              });
+                              setNewBoiName("");
+                              setIsAddingBoi(false);
+                              alert("เพิ่มรายชื่อลูกค้า BOI สำเร็จ!");
+                            } catch (err) {
+                              console.error("Error adding BOI sub customer:", err);
+                            }
+                          }}
+                          className="text-[10px] text-white bg-red-600 hover:bg-red-700 px-2.5 py-1 rounded font-semibold"
+                        >
+                          บันทึก
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+
+                <div>
+                  <select
+                    value={selectedBoiSubCustomer}
+                    onChange={(e) => setSelectedBoiSubCustomer(e.target.value)}
+                    className="w-full px-3 py-2 border border-red-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-red-500 bg-white font-medium"
+                  >
+                    <option value="">-- กรุณาเลือกชื่อลูกค้า BOI --</option>
+                    <optgroup label="กลุ่ม CTC">
+                      {boiCustomers
+                        .filter((c) => c.group === "CTC")
+                        .map((c) => (
+                          <option key={c.id || c.name} value={c.name}>
+                            {c.name}
+                          </option>
+                        ))}
+                    </optgroup>
+                    <optgroup label="อื่นๆ">
+                      {boiCustomers
+                        .filter((c) => c.group === "อื่นๆ")
+                        .map((c) => (
+                          <option key={c.id || c.name} value={c.name}>
+                            {c.name}
+                          </option>
+                        ))}
+                    </optgroup>
+                  </select>
                 </div>
               </div>
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
             <div>
-              <label className="text-xs font-semibold text-gray-600">Full Box (จำนวนต่อกล่อง)</label>
+              <label className="text-xs font-semibold text-gray-600 block">ขนาดกล่อง (Box Size)</label>
+              <select
+                disabled={!selectedProduct}
+                value={isCustomBoxSize ? "__custom__" : boxSize}
+                onChange={(e) => handleBoxSizeChange(e.target.value)}
+                className="w-full mt-1 px-1.5 py-2 border border-gray-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-gray-50 disabled:text-gray-400 bg-white font-medium"
+              >
+                <option value="">-- เลือก --</option>
+                {selectedProduct && (
+                  <>
+                    <optgroup label="แนะนำสำหรับลูกค้านี้ (Recommended)">
+                      {getRecommendedBoxSizes(selectedProduct.customer).map((opt) => (
+                        <option key={opt} value={opt}>
+                          {opt}
+                        </option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="ขนาดกล่องทั้งหมด (All Box Sizes)">
+                      {BOX_SIZE_OPTIONS.filter((opt) => !getRecommendedBoxSizes(selectedProduct.customer).includes(opt)).map((opt) => (
+                        <option key={opt} value={opt}>
+                          {opt}
+                        </option>
+                      ))}
+                    </optgroup>
+                  </>
+                )}
+                <option value="__custom__">⚙️ ระบุเอง / เพิ่มเติม...</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-gray-600 block">Full Box (ต่อกล่อง)</label>
               <input
                 type="number"
                 disabled={!selectedProduct}
                 value={editFullBox}
                 onChange={(e) => handleFullBoxChange(Number(e.target.value))}
-                className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-gray-50 disabled:text-gray-400"
+                className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-gray-50 disabled:text-gray-400 font-mono font-bold"
               />
             </div>
 
             <div>
-              <label className="text-xs font-semibold text-gray-600">จำนวนที่จะโอนออกจริง</label>
+              <label className="text-xs font-semibold text-gray-600 block">จำนวนโอนออก (Qty)</label>
               <input
                 type="number"
                 disabled={!selectedProduct}
                 value={qty}
                 onChange={(e) => setQty(Number(e.target.value))}
-                className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-gray-50 disabled:text-gray-400"
+                className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-gray-50 disabled:text-gray-400 font-mono font-bold"
               />
             </div>
           </div>
 
+          {/* Custom Box Size Input Panel */}
+          {isCustomBoxSize && selectedProduct && (
+            <div className="bg-slate-50 border border-slate-200 p-3 rounded-2xl flex flex-col gap-1.5 mt-1">
+              <label className="text-[10px] font-bold text-slate-600 block">ระบุขนาดกล่องด้วยตัวเอง (Custom Box Size)</label>
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  placeholder="เช่น เขียว XXL, กล่องพิเศษ 2"
+                  value={customBoxSizeInput}
+                  onChange={(e) => setCustomBoxSizeInput(e.target.value)}
+                  className="flex-1 px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs outline-none bg-white focus:ring-1 focus:ring-red-500 font-medium"
+                />
+                <button
+                  type="button"
+                  onClick={() => handleCustomBoxSizeSave(customBoxSizeInput)}
+                  className="bg-slate-800 hover:bg-slate-900 text-white px-3 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 shrink-0 cursor-pointer"
+                >
+                  <Save className="w-3.5 h-3.5" /> บันทึกขนาด
+                </button>
+              </div>
+              <p className="text-[9px] text-slate-400">ขนาดกล่องจะถูกบันทึกเข้าข้อมูลสินค้าหลักของพาร์ทนี้โดยอัตโนมัติเมื่อกดบันทึก</p>
+            </div>
+          )}
+
+          {/* Calculated Box Count Widget */}
+          {selectedProduct && editFullBox > 0 && qty > 0 && (
+            <div className="text-xs bg-slate-50 border border-slate-200/60 p-3 rounded-xl flex justify-between items-center text-slate-700 shadow-3xs">
+              <span className="font-semibold text-slate-600 flex items-center gap-1">📦 จำนวนกล่องคำนวณได้:</span>
+              <span className="font-extrabold text-red-600 text-sm font-mono">
+                {Math.ceil(qty / editFullBox)} <span className="text-xs text-slate-500 font-normal">กล่อง</span>
+                <span className="text-[10px] text-slate-400 font-normal ml-1.5">
+                  ({(qty / editFullBox).toFixed(2)} กล่อง)
+                </span>
+              </span>
+            </div>
+          )}
+
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-gray-600 block">Label ID</label>
+            <div className="flex justify-between items-center flex-wrap gap-2">
+              <label className="text-xs font-semibold text-gray-600 block">Label ID</label>
+              {isLabelFocused ? (
+                <span className="text-[10px] text-green-600 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full font-bold flex items-center gap-1 animate-pulse">
+                  <span className="h-1.5 w-1.5 rounded-full bg-green-500 animate-ping" />
+                  <span>Ready to Scan (พร้อมสแกน)</span>
+                </span>
+              ) : (
+                <span className="text-[10px] text-gray-400 bg-gray-50 border border-gray-200 px-2 py-0.5 rounded-full font-medium flex items-center gap-1">
+                  <span className="h-1.5 w-1.5 rounded-full bg-gray-300" />
+                  <span>คลิกที่นี่เพื่อรอสแกน</span>
+                </span>
+              )}
+            </div>
             <div className="flex gap-2">
               <input
                 type="text"
                 placeholder="สแกนฉลากระบุตัวตนสินค้า..."
                 value={labelId}
                 onChange={(e) => setLabelId(e.target.value)}
+                onFocus={() => setIsLabelFocused(true)}
+                onBlur={() => setIsLabelFocused(false)}
                 className="flex-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
               />
               <button

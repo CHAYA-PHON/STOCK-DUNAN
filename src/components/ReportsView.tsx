@@ -17,7 +17,7 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
   // Filter States
   const [filterMonth, setFilterMonth] = useState(new Date().getMonth() + 1);
   const [filterYear, setFilterYear] = useState(new Date().getFullYear());
-  const [filterType, setFilterType] = useState<"all" | "in" | "out">("all");
+  const [filterType, setFilterType] = useState<"all" | "in" | "out" | "adj_in" | "adj_out">("all");
 
   // Transfer Printing filter states
   const [printStartDate, setPrintStartDate] = useState(new Date().toISOString().split("T")[0]);
@@ -125,16 +125,7 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
       const newQty = editingTxQty;
       const diff = newQty - oldQty;
 
-      // 1. Update transaction in Firestore
-      const txRef = doc(db, "inventory_log", editingTx.id);
-      await updateDoc(txRef, {
-        qty: newQty,
-        location: editingTxLocation,
-        shift: editingTxShift,
-        subType: editingTxSubType,
-      });
-
-      // 2. Adjust corresponding product stock
+      // Find the corresponding product first to run safety checks
       const pMatch = products.find(
         (p) =>
           p.partNo.trim().toLowerCase() === editingTx.partNo.trim().toLowerCase() &&
@@ -142,15 +133,40 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
       );
 
       if (pMatch) {
-        const pRef = doc(db, "products", pMatch.id);
         const currentProdStock = pMatch.stock || 0;
         let finalStock = currentProdStock;
-        if (editingTx.type === "in") {
+        if (editingTx.type === "in" || editingTx.type === "adj_in") {
           finalStock = currentProdStock + diff;
-        } else if (editingTx.type === "out") {
+        } else if (editingTx.type === "out" || editingTx.type === "adj_out") {
           finalStock = currentProdStock - diff;
         }
+
+        if (finalStock < 0) {
+          alert(`⚠️ ไม่สามารถทำการแก้ไขรายการได้!\nเนื่องจากการแก้ไขจำนวนนี้จะส่งผลให้สต๊อกคงเหลือของสินค้าติดลบ (สต๊อกปัจจุบัน: ${currentProdStock} ชิ้น, ยอดคงเหลือหลังแก้ไข: ${finalStock} ชิ้น)`);
+          return;
+        }
+
+        // 1. Update transaction in Firestore
+        const txRef = doc(db, "inventory_log", editingTx.id);
+        await updateDoc(txRef, {
+          qty: newQty,
+          location: editingTxLocation,
+          shift: editingTxShift,
+          subType: editingTxSubType,
+        });
+
+        // 2. Update product stock
+        const pRef = doc(db, "products", pMatch.id);
         await updateDoc(pRef, { stock: finalStock });
+      } else {
+        // If product doesn't exist, just update the transaction log
+        const txRef = doc(db, "inventory_log", editingTx.id);
+        await updateDoc(txRef, {
+          qty: newQty,
+          location: editingTxLocation,
+          shift: editingTxShift,
+          subType: editingTxSubType,
+        });
       }
 
       setEditingTx(null);
@@ -163,10 +179,7 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
 
   const handleDeleteTx = async (tx: InventoryTransaction) => {
     try {
-      // 1. Delete transaction in Firestore
-      await deleteDoc(doc(db, "inventory_log", tx.id));
-
-      // 2. Adjust corresponding product stock
+      // Find the corresponding product first to run safety checks
       const pMatch = products.find(
         (p) =>
           p.partNo.trim().toLowerCase() === tx.partNo.trim().toLowerCase() &&
@@ -174,15 +187,29 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
       );
 
       if (pMatch) {
-        const pRef = doc(db, "products", pMatch.id);
         const currentProdStock = pMatch.stock || 0;
         let finalStock = currentProdStock;
-        if (tx.type === "in") {
+        if (tx.type === "in" || tx.type === "adj_in") {
           finalStock = currentProdStock - tx.qty;
-        } else if (tx.type === "out") {
+        } else if (tx.type === "out" || tx.type === "adj_out") {
           finalStock = currentProdStock + tx.qty;
         }
+
+        if (finalStock < 0) {
+          alert(`⚠️ ไม่สามารถลบรายการได้!\nเนื่องจากรายการนี้เป็นยอดรับเข้าสินค้า หากทำการลบจะหักสต๊อกออก และส่งผลให้สต๊อกคงเหลือติดลบได้ (สต๊อกปัจจุบัน: ${currentProdStock} ชิ้น, จำนวนที่จะหักออก: ${tx.qty} ชิ้น)`);
+          setDeleteConfirmTxId(null);
+          return;
+        }
+
+        // 1. Delete transaction in Firestore
+        await deleteDoc(doc(db, "inventory_log", tx.id));
+
+        // 2. Adjust product stock
+        const pRef = doc(db, "products", pMatch.id);
         await updateDoc(pRef, { stock: finalStock });
+      } else {
+        // Just delete transaction if product is already gone
+        await deleteDoc(doc(db, "inventory_log", tx.id));
       }
 
       setDeleteConfirmTxId(null);
@@ -204,7 +231,7 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
       // Create clean rows format
       const sheetData = filteredTxs.map((t) => ({
         "วันที่ทำรายการ": t.timestamp.toLocaleString("th-TH"),
-        "ประเภท": t.type === "in" ? "รับเข้า" : "โอนออก",
+        "ประเภท": t.type === "in" ? "รับเข้า" : t.type === "adj_in" ? "ปรับสต๊อกเข้า" : t.type === "adj_out" ? "ปรับสต๊อกออก" : "โอนออก",
         "การจัดหมวดหมู่": t.subType,
         "แบรนด์ / ลูกค้า": t.customer,
         "รหัสสินค้า (Part No)": t.partNo,
@@ -290,9 +317,9 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
         // Calculate closing stock at the end of the selected month
         let closingStock = currentStock;
         txsAfter.forEach((t) => {
-          if (t.type === "in") {
+          if (t.type === "in" || t.type === "adj_in") {
             closingStock -= t.qty;
-          } else if (t.type === "out") {
+          } else if (t.type === "out" || t.type === "adj_out") {
             closingStock += t.qty;
           }
         });
@@ -302,22 +329,32 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
         const dailyOut = Array(32).fill(0);
         let totalIn = 0;
         let totalOut = 0;
+        let totalAdjIn = 0;
+        let totalAdjOut = 0;
 
         txsDuring.forEach((t) => {
           const day = t.timestamp.getDate();
           if (day >= 1 && day <= 31) {
-            if (t.type === "in") {
+            if (t.type === "in" || t.type === "adj_in") {
               dailyIn[day] += t.qty;
-              totalIn += t.qty;
-            } else if (t.type === "out") {
+              if (t.type === "in") {
+                totalIn += t.qty;
+              } else {
+                totalAdjIn += t.qty;
+              }
+            } else if (t.type === "out" || t.type === "adj_out") {
               dailyOut[day] += t.qty;
-              totalOut += t.qty;
+              if (t.type === "out") {
+                totalOut += t.qty;
+              } else {
+                totalAdjOut += t.qty;
+              }
             }
           }
         });
 
         // Calculate opening stock at the start of the selected month
-        const openingStock = closingStock - totalIn + totalOut;
+        const openingStock = closingStock - (totalIn + totalAdjIn) + (totalOut + totalAdjOut);
 
         // Create product data row
         const row: any[] = [
@@ -639,7 +676,14 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
                           {t.shift}
                         </span>
                       </td>
-                      <td className="p-3 font-bold text-gray-700 uppercase">{t.customer}</td>
+                      <td className="p-3 font-bold text-gray-700 uppercase">
+                        <div>{t.customer}</div>
+                        {t.subCustomer && (
+                          <div className="text-[10px] text-red-600 bg-red-50 border border-red-100 rounded px-1.5 py-0.5 inline-block mt-0.5 normal-case font-bold">
+                            {t.subCustomer}
+                          </div>
+                        )}
+                      </td>
                       <td className="p-3 font-mono font-semibold text-gray-900">{t.partNo}</td>
                       <td className="p-3 text-right font-bold text-gray-800 text-sm">{t.qty.toLocaleString()}</td>
                       <td className="p-3 text-gray-600">{t.operatorName}</td>
@@ -729,6 +773,8 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
               <option value="all">ดูรายการทั้งหมด</option>
               <option value="in">เฉพาะรับเข้า (In)</option>
               <option value="out">เฉพาะโอนออก (Out)</option>
+              <option value="adj_in">เฉพาะปรับสต๊อกเข้า (Adjust In)</option>
+              <option value="adj_out">เฉพาะปรับสต๊อกออก (Adjust Out)</option>
             </select>
           </div>
         </div>
@@ -764,11 +810,13 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
                       <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${
                         t.type === "in"
                           ? "bg-green-50 text-green-700" 
-                          : t.subType.includes("ปรับยอด") 
-                          ? "bg-yellow-50 text-yellow-700" 
+                          : t.type === "adj_in"
+                          ? "bg-yellow-100 text-yellow-800 border border-yellow-200/60" 
+                          : t.type === "adj_out"
+                          ? "bg-orange-100 text-orange-800 border border-orange-200/60"
                           : "bg-red-50 text-red-600"
                       }`}>
-                        {t.type === "in" ? "รับเข้า" : "โอนออก"}
+                        {t.type === "in" ? "รับเข้า" : t.type === "adj_in" ? "ปรับสต๊อกเข้า" : t.type === "adj_out" ? "ปรับสต๊อกออก" : "โอนออก"}
                       </span>
                       <div className="text-[9px] text-gray-400 mt-1">{t.subType}</div>
                     </td>
@@ -778,8 +826,16 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
                       <div className="text-[9px] text-gray-400">ผู้ทำ: {t.operatorName}</div>
                     </td>
                     <td className="p-3 text-right">
-                      <span className={`font-bold ${t.type === "in" ? "text-green-600" : "text-red-500"}`}>
-                        {t.type === "in" ? "+" : "-"}
+                      <span className={`font-bold ${
+                        t.type === "in"
+                          ? "text-green-600"
+                          : t.type === "adj_in"
+                          ? "text-yellow-600 font-extrabold"
+                          : t.type === "adj_out"
+                          ? "text-orange-600 font-extrabold"
+                          : "text-red-500"
+                      }`}>
+                        {(t.type === "in" || t.type === "adj_in") ? "+" : "-"}
                         {t.qty.toLocaleString()}
                       </span>
                     </td>

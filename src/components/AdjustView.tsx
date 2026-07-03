@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from "react";
-import { collection, onSnapshot, doc, setDoc, updateDoc, writeBatch } from "firebase/firestore";
+import { collection, onSnapshot, doc, setDoc, updateDoc, writeBatch, addDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import { Product, Employee, AdjustRequest } from "../types";
 import { fuzzySearch } from "../utils/fuzzy";
 import { getSafeProductId } from "../utils/productUtils";
 import * as XLSX from "xlsx";
-import { Search, AlertCircle, Clock, Check, X, ShieldAlert, Edit, Upload, Clipboard, FileSpreadsheet, Sparkles } from "lucide-react";
+import { Search, AlertCircle, Clock, Check, X, ShieldAlert, Edit, Upload, Clipboard, FileSpreadsheet, Sparkles, Plus } from "lucide-react";
+import { DEFAULT_BOI_CUSTOMERS, BOICustomer } from "../utils/boxSizeUtils";
 
 interface AdjustViewProps {
   currentUser: Employee | null;
@@ -20,6 +21,13 @@ export default function AdjustView({ currentUser }: AdjustViewProps) {
   const [fuzzyResults, setFuzzyResults] = useState<Product[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [actualStock, setActualStock] = useState<number>(0);
+
+  // BOI Customer States
+  const [boiCustomers, setBoiCustomers] = useState<BOICustomer[]>([]);
+  const [selectedBoiSubCustomer, setSelectedBoiSubCustomer] = useState("");
+  const [isAddingBoi, setIsAddingBoi] = useState(false);
+  const [newBoiName, setNewBoiName] = useState("");
+  const [newBoiGroup, setNewBoiGroup] = useState<"CTC" | "อื่นๆ">("CTC");
 
   // Request list filters
   const [filterStatus, setFilterStatus] = useState<"all" | "pending" | "approved" | "rejected">("all");
@@ -75,6 +83,12 @@ export default function AdjustView({ currentUser }: AdjustViewProps) {
           const match = products.find(p => p.id === prodId);
 
           if (match) {
+            const diff = countVal - (match.stock || 0);
+            if (diff === 0) {
+              // หากยอดไม่มีการแก้ไข ไม่ต้องบันทึก/รับเข้า
+              continue;
+            }
+
             const prodRef = doc(db, "products", prodId);
             batch.update(prodRef, {
               stock: countVal,
@@ -85,7 +99,6 @@ export default function AdjustView({ currentUser }: AdjustViewProps) {
 
             // Log to adjust_requests as an auto-approved EOM adjustment
             const reqId = `REQ-EOM-${Date.now().toString().slice(-4)}-${countUpdated}`;
-            const diff = countVal - (match.stock || 0);
             const reqRef = doc(db, "adjust_requests", reqId);
             batch.set(reqRef, {
               id: reqId,
@@ -109,7 +122,7 @@ export default function AdjustView({ currentUser }: AdjustViewProps) {
               partNo: match.partNo,
               partName: match.partName,
               customer: match.customer,
-              type: diff >= 0 ? "in" : "out",
+              type: diff >= 0 ? "adj_in" : "adj_out",
               subType: "ตรวจนับสต๊อกสิ้นเดือนประจำเดือน (End of Month Count)",
               qty: Math.abs(diff),
               location: "ZONE-ADJ-EOM",
@@ -121,7 +134,66 @@ export default function AdjustView({ currentUser }: AdjustViewProps) {
 
             countUpdated++;
           } else {
-            countNotFound++;
+            // หากมีสินค้าที่ไม่มีในระบบ ให้สอบถามและเพิ่มรายการที่เลือก
+            const confirmAdd = window.confirm(
+              `พบรหัสพาร์ท "${partNo}" (ลูกค้า: ${customer}) ยอดตรวจนับจริง: ${countVal} ชิ้น ที่ไม่มีอยู่ในฐานข้อมูลของระบบ!\n\nคุณต้องการเพิ่มสินค้าตัวนี้เข้าไปในระบบโดยอัตโนมัติเลยหรือไม่?`
+            );
+            if (confirmAdd) {
+              const newProdRef = doc(db, "products", prodId);
+              batch.set(newProdRef, {
+                id: prodId,
+                customer,
+                partNo,
+                partName: `${customer} ${partNo}`,
+                sapNo: "-",
+                zone: "-",
+                fullBox: 24,
+                packageType: "BOX",
+                openingStock: countVal,
+                receivedTotal: 0,
+                shippedTotal: 0,
+                stock: countVal,
+              });
+
+              // Log as an adjust request
+              const reqId = `REQ-EOM-${Date.now().toString().slice(-4)}-${countUpdated}`;
+              const reqRef = doc(db, "adjust_requests", reqId);
+              batch.set(reqRef, {
+                id: reqId,
+                partNo: partNo,
+                partName: `${customer} ${partNo}`,
+                currentStock: 0,
+                actualStock: countVal,
+                difference: countVal,
+                requesterId: currentUser?.id || "00000000",
+                requesterName: currentUser ? `${currentUser.name} ${currentUser.lastName}` : "System Operator",
+                timestamp: new Date(),
+                status: "approved",
+                approvedBy: currentUser ? `${currentUser.name} ${currentUser.lastName} (EOM New Part)` : "Supervisor (EOM New Part)",
+                approvedTimestamp: new Date()
+              });
+
+              // Log to inventory_log
+              const logRef = doc(collection(db, "inventory_log"));
+              batch.set(logRef, {
+                labelId: `ADJ-EOM-${reqId.slice(-4)}`,
+                partNo: partNo,
+                partName: `${customer} ${partNo}`,
+                customer: customer,
+                type: "adj_in",
+                subType: "เพิ่มสินค้าใหม่พร้อมตรวจนับสต๊อกสิ้นเดือน (EOM New Product)",
+                qty: countVal,
+                location: "ZONE-ADJ-EOM",
+                shift: "DAY",
+                operatorId: currentUser?.id || "00000000",
+                operatorName: currentUser ? `${currentUser.name} ${currentUser.lastName}` : "System Operator",
+                timestamp: new Date()
+              });
+
+              countUpdated++;
+            } else {
+              countNotFound++;
+            }
           }
         }
 
@@ -186,6 +258,12 @@ export default function AdjustView({ currentUser }: AdjustViewProps) {
         const match = products.find(p => p.id === prodId);
 
         if (match) {
+          const diff = countVal - (match.stock || 0);
+          if (diff === 0) {
+            // หากยอดไม่มีการแก้ไข ไม่ต้องรับเข้า
+            continue;
+          }
+
           const prodRef = doc(db, "products", prodId);
           batch.update(prodRef, {
             stock: countVal,
@@ -196,7 +274,6 @@ export default function AdjustView({ currentUser }: AdjustViewProps) {
 
           // Also log to adjust_requests as a auto-approved EOM adjustment
           const reqId = `REQ-EOM-${Date.now().toString().slice(-4)}-${countUpdated}`;
-          const diff = countVal - (match.stock || 0);
           const reqRef = doc(db, "adjust_requests", reqId);
           batch.set(reqRef, {
             id: reqId,
@@ -220,7 +297,7 @@ export default function AdjustView({ currentUser }: AdjustViewProps) {
             partNo: match.partNo,
             partName: match.partName,
             customer: match.customer,
-            type: diff >= 0 ? "in" : "out",
+            type: diff >= 0 ? "adj_in" : "adj_out",
             subType: "ตรวจนับสต๊อกสิ้นเดือนประจำเดือน (End of Month Count)",
             qty: Math.abs(diff),
             location: "ZONE-ADJ-EOM",
@@ -232,7 +309,66 @@ export default function AdjustView({ currentUser }: AdjustViewProps) {
 
           countUpdated++;
         } else {
-          countNotFound++;
+          // หากมีสินค้าที่ไม่มีในระบบ ให้สอบถามและเพิ่มรายการที่เลือก
+          const confirmAdd = window.confirm(
+            `พบรหัสพาร์ท "${partNo}" (ลูกค้า: ${customer}) ยอดตรวจนับจริง: ${countVal} ชิ้น ที่ไม่มีอยู่ในฐานข้อมูลของระบบ!\n\nคุณต้องการเพิ่มสินค้าตัวนี้เข้าไปในระบบโดยอัตโนมัติเลยหรือไม่?`
+          );
+          if (confirmAdd) {
+            const newProdRef = doc(db, "products", prodId);
+            batch.set(newProdRef, {
+              id: prodId,
+              customer,
+              partNo,
+              partName: `${customer} ${partNo}`,
+              sapNo: "-",
+              zone: "-",
+              fullBox: 24,
+              packageType: "BOX",
+              openingStock: countVal,
+              receivedTotal: 0,
+              shippedTotal: 0,
+              stock: countVal,
+            });
+
+            // Log as an adjust request
+            const reqId = `REQ-EOM-${Date.now().toString().slice(-4)}-${countUpdated}`;
+            const reqRef = doc(db, "adjust_requests", reqId);
+            batch.set(reqRef, {
+              id: reqId,
+              partNo: partNo,
+              partName: `${customer} ${partNo}`,
+              currentStock: 0,
+              actualStock: countVal,
+              difference: countVal,
+              requesterId: currentUser?.id || "00000000",
+              requesterName: currentUser ? `${currentUser.name} ${currentUser.lastName}` : "System Operator",
+              timestamp: new Date(),
+              status: "approved",
+              approvedBy: currentUser ? `${currentUser.name} ${currentUser.lastName} (EOM New Part)` : "Supervisor (EOM New Part)",
+              approvedTimestamp: new Date()
+            });
+
+            // Log to inventory_log
+            const logRef = doc(collection(db, "inventory_log"));
+            batch.set(logRef, {
+              labelId: `ADJ-EOM-${reqId.slice(-4)}`,
+              partNo: partNo,
+              partName: `${customer} ${partNo}`,
+              customer: customer,
+              type: "adj_in",
+              subType: "เพิ่มสินค้าใหม่พร้อมตรวจนับสต๊อกสิ้นเดือน (EOM New Product)",
+              qty: countVal,
+              location: "ZONE-ADJ-EOM",
+              shift: "DAY",
+              operatorId: currentUser?.id || "00000000",
+              operatorName: currentUser ? `${currentUser.name} ${currentUser.lastName}` : "System Operator",
+              timestamp: new Date()
+            });
+
+            countUpdated++;
+          } else {
+            countNotFound++;
+          }
         }
       }
 
@@ -274,9 +410,25 @@ export default function AdjustView({ currentUser }: AdjustViewProps) {
       setAdjustRequests(items);
     });
 
+    // 3. Fetch BOI sub customers
+    const unsubBoi = onSnapshot(collection(db, "boi_sub_customers"), (snap) => {
+      if (snap.empty) {
+        DEFAULT_BOI_CUSTOMERS.forEach((c) => {
+          addDoc(collection(db, "boi_sub_customers"), c);
+        });
+      } else {
+        const items: BOICustomer[] = [];
+        snap.forEach((doc) => {
+          items.push({ id: doc.id, ...doc.data() } as BOICustomer);
+        });
+        setBoiCustomers(items);
+      }
+    });
+
     return () => {
       unsubProds();
       unsubReqs();
+      unsubBoi();
     };
   }, []);
 
@@ -299,6 +451,7 @@ export default function AdjustView({ currentUser }: AdjustViewProps) {
     setSelectedProduct(prod);
     setActualStock(prod.stock || 0);
     setFuzzyResults([]);
+    setSelectedBoiSubCustomer("");
   };
 
   const handleCreateRequest = async (e: React.FormEvent) => {
@@ -311,9 +464,18 @@ export default function AdjustView({ currentUser }: AdjustViewProps) {
       alert("กรุณาค้นหาและเลือกสินค้าก่อนส่งปรับปรุงสต๊อก");
       return;
     }
+    if (selectedProduct.customer.toUpperCase() === "BOI" && !selectedBoiSubCustomer) {
+      alert("กรุณาเลือกชื่อลูกค้าในกลุ่ม BOI");
+      return;
+    }
 
     const currentStockVal = selectedProduct.stock || 0;
     const diff = actualStock - currentStockVal;
+
+    if (diff === 0) {
+      alert("⚠️ ยอดตรวจนับจริงเท่ากับยอดปัจจุบัน ไม่มีผลต่าง ไม่สามารถส่งคำขอปรับยอดได้");
+      return;
+    }
 
     try {
       const reqId = `REQ-${Date.now().toString().slice(-8)}`;
@@ -321,6 +483,7 @@ export default function AdjustView({ currentUser }: AdjustViewProps) {
         id: reqId,
         partNo: selectedProduct.partNo,
         partName: selectedProduct.partName,
+        subCustomer: selectedProduct.customer.toUpperCase() === "BOI" ? (selectedBoiSubCustomer || null) : null,
         currentStock: currentStockVal,
         actualStock,
         difference: diff,
@@ -335,6 +498,7 @@ export default function AdjustView({ currentUser }: AdjustViewProps) {
       // Reset
       setPartSearch("");
       setSelectedProduct(null);
+      setSelectedBoiSubCustomer("");
     } catch (err) {
       console.error(err);
       alert("เกิดข้อผิดพลาดในการบันทึกคำขอ");
@@ -379,7 +543,8 @@ export default function AdjustView({ currentUser }: AdjustViewProps) {
           partNo: req.partNo,
           partName: req.partName,
           customer: match.customer,
-          type: req.difference >= 0 ? "in" : "out",
+          subCustomer: req.subCustomer || null,
+          type: req.difference >= 0 ? "adj_in" : "adj_out",
           subType: "ปรับยอดสโตร์ประจำเดือน (Stock Count)",
           qty: Math.abs(req.difference),
           location: "ZONE-ADJ",
@@ -421,6 +586,10 @@ export default function AdjustView({ currentUser }: AdjustViewProps) {
     if (!editingRequest) return;
     try {
       const diff = editingActualValue - editingRequest.currentStock;
+      if (diff === 0) {
+        alert("⚠️ ยอดแก้ไขไม่มีผลต่าง (ผลต่างเป็น 0) กรุณากรอกยอดอื่นหรือยกเลิกการแก้ไข");
+        return;
+      }
       await updateDoc(doc(db, "adjust_requests", editingRequest.id), {
         actualStock: editingActualValue,
         difference: diff,
@@ -573,6 +742,118 @@ export default function AdjustView({ currentUser }: AdjustViewProps) {
                 </span>
               </div>
               <p className="text-[11px] text-gray-500">{selectedProduct.partName}</p>
+
+              {/* BOI Sub-Customer Selector */}
+              {selectedProduct.customer.toUpperCase() === "BOI" && (
+                <div className="bg-red-50/50 border border-red-200/60 p-3 rounded-xl space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-[10px] font-bold text-red-800 flex items-center gap-1">
+                      💼 ลูกค้ากลุ่ม BOI
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setIsAddingBoi(!isAddingBoi)}
+                      className="text-[9px] bg-red-600 hover:bg-red-700 text-white font-semibold px-1.5 py-0.5 rounded transition flex items-center gap-0.5 cursor-pointer"
+                    >
+                      <Plus className="w-2.5 h-2.5" /> เพิ่ม
+                    </button>
+                  </div>
+
+                  {isAddingBoi ? (
+                    <div className="bg-white border border-red-100 p-2 rounded-lg space-y-2 shadow-xs">
+                      <input
+                        type="text"
+                        placeholder="ระบุชื่อลูกค้า เช่น SAMBO"
+                        value={newBoiName}
+                        onChange={(e) => setNewBoiName(e.target.value)}
+                        className="w-full px-2 py-1 border border-gray-200 rounded text-[11px] outline-none"
+                      />
+                      <div className="flex items-center justify-between">
+                        <div className="flex gap-2">
+                          <label className="flex items-center gap-0.5 text-[9px] text-gray-600">
+                            <input
+                              type="radio"
+                              name="boi_group_adj"
+                              checked={newBoiGroup === "CTC"}
+                              onChange={() => setNewBoiGroup("CTC")}
+                            />
+                            CTC
+                          </label>
+                          <label className="flex items-center gap-0.5 text-[9px] text-gray-600">
+                            <input
+                              type="radio"
+                              name="boi_group_adj"
+                              checked={newBoiGroup === "อื่นๆ"}
+                              onChange={() => setNewBoiGroup("อื่นๆ")}
+                            />
+                            อื่นๆ
+                          </label>
+                        </div>
+                        <div className="flex gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setIsAddingBoi(false)}
+                            className="text-[9px] text-gray-400 hover:text-gray-600 font-medium px-1.5 py-0.5 rounded"
+                          >
+                            ยกเลิก
+                          </button>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              if (!newBoiName.trim()) {
+                                alert("กรุณากรอกชื่อลูกค้า");
+                                return;
+                              }
+                              try {
+                                await addDoc(collection(db, "boi_sub_customers"), {
+                                  name: newBoiName.trim().toUpperCase(),
+                                  group: newBoiGroup
+                                });
+                                setNewBoiName("");
+                                setIsAddingBoi(false);
+                                alert("เพิ่มรายชื่อลูกค้า BOI สำเร็จ!");
+                              } catch (err) {
+                                console.error("Error adding BOI sub customer:", err);
+                              }
+                            }}
+                            className="text-[9px] text-white bg-red-600 hover:bg-red-700 px-2 py-0.5 rounded font-semibold"
+                          >
+                            บันทึก
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div>
+                    <select
+                      value={selectedBoiSubCustomer}
+                      onChange={(e) => setSelectedBoiSubCustomer(e.target.value)}
+                      className="w-full px-2 py-1.5 border border-red-200 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-red-500 bg-white font-medium"
+                    >
+                      <option value="">-- กรุณาเลือกชื่อลูกค้า BOI --</option>
+                      <optgroup label="กลุ่ม CTC">
+                        {boiCustomers
+                          .filter((c) => c.group === "CTC")
+                          .map((c) => (
+                            <option key={c.id || c.name} value={c.name}>
+                              {c.name}
+                            </option>
+                          ))}
+                      </optgroup>
+                      <optgroup label="อื่นๆ">
+                        {boiCustomers
+                          .filter((c) => c.group === "อื่นๆ")
+                          .map((c) => (
+                            <option key={c.id || c.name} value={c.name}>
+                              {c.name}
+                            </option>
+                          ))}
+                      </optgroup>
+                    </select>
+                  </div>
+                </div>
+              )}
 
               <div className="flex justify-between items-center bg-white p-2.5 rounded-lg border border-gray-100 text-xs font-semibold">
                 <span className="text-gray-500">ยอดสต๊อกในระบบปัจจุบัน:</span>
