@@ -110,6 +110,14 @@ export interface LocationItem {
   created: any;
 }
 
+export interface DeliveryFlow {
+  id: string;
+  type: string; // "รับงาน" | "โอนงาน" | "ส่งงาน"
+  name: string;
+  from: string;
+  to: string;
+}
+
 export interface NotificationItem {
   id: string;
   title: string;

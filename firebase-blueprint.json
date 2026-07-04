@@ -129,6 +129,19 @@
         "inTypes": { "type": "array", "items": { "type": "string" } },
         "outTypes": { "type": "array", "items": { "type": "string" } }
       }
+    },
+    "DeliveryFlow": {
+      "title": "DeliveryFlow",
+      "description": "Configurable delivery work types with source and destination details",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string" },
+        "name": { "type": "string" },
+        "from": { "type": "string" },
+        "to": { "type": "string" }
+      },
+      "required": ["type", "name", "from", "to"]
     }
   },
   "firestore": {
@@ -163,6 +176,10 @@
     "/settings/{settingId}": {
       "schema": "SystemSettings",
       "description": "General settings configurations"
+    },
+    "/deliveryFlows/{flowId}": {
+      "schema": "DeliveryFlow",
+      "description": "Dynamic transaction delivery type flows"
     }
   }
 }

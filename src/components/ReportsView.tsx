@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { collection, onSnapshot, query, where, getDocs, doc, writeBatch, updateDoc, deleteDoc } from "firebase/firestore";
 import { db } from "../firebase";
-import { InventoryTransaction, Employee, Product } from "../types";
+import { InventoryTransaction, Employee, Product, DeliveryFlow } from "../types";
 import * as XLSX from "xlsx";
 import { FileText, Download, Printer, Filter, Calendar, Users, Eye, CheckCircle, Trash2, Edit, X, Check } from "lucide-react";
 
@@ -13,11 +13,18 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
   const [transactions, setTransactions] = useState<InventoryTransaction[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [deliveryFlows, setDeliveryFlows] = useState<DeliveryFlow[]>([]);
 
   // Filter States
   const [filterMonth, setFilterMonth] = useState(new Date().getMonth() + 1);
   const [filterYear, setFilterYear] = useState(new Date().getFullYear());
   const [filterType, setFilterType] = useState<"all" | "in" | "out" | "adj_in" | "adj_out">("all");
+
+  // Monthly Stock Log filter states
+  const [monthlySearch, setMonthlySearch] = useState("");
+  const [monthlyShift, setMonthlyShift] = useState("all");
+  const [monthlyDay, setMonthlyDay] = useState("all");
+  const [monthlyCustomer, setMonthlyCustomer] = useState("all");
 
   // Transfer Printing filter states
   const [printStartDate, setPrintStartDate] = useState(new Date().toISOString().split("T")[0]);
@@ -26,6 +33,7 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
   const [printCustomer, setPrintCustomer] = useState("all");
   const [printType, setPrintType] = useState("all");
   const [printStatus, setPrintStatus] = useState<"all" | "unprinted" | "printed">("all");
+  const [printShift, setPrintShift] = useState<string>("all");
   const [selectedTxIds, setSelectedTxIds] = useState<string[]>([]);
 
   // Editing & Deleting states for Monthly Stock Log transactions
@@ -70,10 +78,18 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
       setProducts(list);
     });
 
+    // 4. Fetch delivery flows for dynamic printing headers
+    const unsubFlows = onSnapshot(collection(db, "deliveryFlows"), (snap) => {
+      const list: DeliveryFlow[] = [];
+      snap.forEach((d) => list.push({ id: d.id, ...d.data() } as DeliveryFlow));
+      setDeliveryFlows(list);
+    });
+
     return () => {
       unsubTxs();
       unsubEmps();
       unsubProds();
+      unsubFlows();
     };
   }, []);
 
@@ -82,8 +98,40 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
     const d = t.timestamp;
     if (d.getMonth() + 1 !== filterMonth || d.getFullYear() !== filterYear) return false;
     if (filterType !== "all" && t.type !== filterType) return false;
+
+    // Filter by specific day (1-31)
+    if (monthlyDay !== "all" && d.getDate() !== Number(monthlyDay)) return false;
+
+    // Filter by shift
+    if (monthlyShift !== "all" && t.shift !== monthlyShift) return false;
+
+    // Filter by customer
+    if (monthlyCustomer !== "all" && t.customer !== monthlyCustomer) return false;
+
+    // Filter by search query (sapNo, Part No, Customer, operatorName)
+    if (monthlySearch.trim() !== "") {
+      const q = monthlySearch.toLowerCase().trim();
+      const prod = products.find(p => p.partNo === t.partNo && p.customer === t.customer) || products.find(p => p.partNo === t.partNo);
+      const sapNo = prod ? (prod.sapNo || "").toLowerCase() : "";
+      const partNo = (t.partNo || "").toLowerCase();
+      const customer = (t.customer || "").toLowerCase();
+      const operator = (t.operatorName || "").toLowerCase();
+
+      if (!sapNo.includes(q) && !partNo.includes(q) && !customer.includes(q) && !operator.includes(q)) {
+        return false;
+      }
+    }
+
     return true;
   });
+
+  // Get unique customers for filtering
+  const monthlyCustomers = Array.from(
+    new Set([
+      ...products.map((p) => p.customer).filter(Boolean),
+      ...transactions.map((t) => t.customer).filter(Boolean)
+    ])
+  ).sort();
 
   // Get all unique subTypes from transactions dynamically for filtering
   const allUniqueInSubTypes = Array.from(
@@ -128,6 +176,9 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
     // 5. Status filter
     if (printStatus === "unprinted" && t.printed) return false;
     if (printStatus === "printed" && !t.printed) return false;
+
+    // 6. Shift filter
+    if (printShift !== "all" && t.shift !== printShift) return false;
 
     return true;
   });
@@ -448,6 +499,119 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
     }
   };
 
+  // Helpers for printing
+  const getSlipDate = () => {
+    if (selectedTransactions.length === 0) return new Date();
+    const tx = selectedTransactions[0];
+    if (tx.timestamp) {
+      return tx.timestamp.toDate ? tx.timestamp.toDate() : new Date(tx.timestamp);
+    }
+    return new Date();
+  };
+
+  const formatThaiDate = (date: Date) => {
+    const months = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
+    const day = String(date.getDate()).padStart(2, "0");
+    const month = months[date.getMonth()];
+    const year = date.getFullYear() + 543;
+    return `${day}-${month}-${year}`;
+  };
+
+  const getShiftBgColor = (shift: string) => {
+    if (shift === "DAY") return "#fef08a"; // Light yellow
+    if (shift === "NIGHT") return "#1e1b4b"; // Deep dark indigo/blue
+    return "#000000"; // Black
+  };
+
+  const getShiftTextColor = (shift: string) => {
+    if (shift === "DAY") return "#000000";
+    return "#ffffff";
+  };
+
+  const getSlipShift = () => {
+    if (printShift && printShift !== "all") {
+      return printShift;
+    }
+    if (selectedTransactions.length === 0) return "ทั้งหมด";
+    const firstShift = selectedTransactions[0].shift || "DAY";
+    const allSame = selectedTransactions.every((t) => t.shift === firstShift);
+    return allSame ? firstShift : "ทั้งหมด";
+  };
+
+  const formatThaiDateTime = (dateObj: any) => {
+    if (!dateObj) return "-";
+    const date = dateObj.toDate ? dateObj.toDate() : new Date(dateObj);
+    const months = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
+    const day = String(date.getDate()).padStart(2, "0");
+    const month = months[date.getMonth()];
+    const year = date.getFullYear() + 543;
+    const hours = String(date.getHours()).padStart(2, "0");
+    const minutes = String(date.getMinutes()).padStart(2, "0");
+    return `${day}-${month}-${year} ${hours}:${minutes}`;
+  };
+
+  const getPackingInfo = (item: any) => {
+    const product = products.find(p => p.partNo === item.partNo && p.customer === item.customer);
+    if (!product) return "-";
+    const boxSize = product.boxSize || "BOX";
+    if (product.fullBox && product.fullBox > 0) {
+      const boxCount = Math.ceil(item.qty / product.fullBox);
+      return `${boxCount} - ${boxSize}`;
+    }
+    return `1 - ${boxSize}`;
+  };
+
+  const getDynamicPrintedTitle = () => {
+    if (selectedTransactions.length === 0) {
+      return "รายการ บันทึกการส่งงาน สโตร์กลาง - สโตร์ FG.";
+    }
+
+    const tx = selectedTransactions[0];
+    
+    // Check if adjustment
+    const isAdjustment = tx.type?.includes("adj") || tx.subType?.includes("ตรวจนับ") || tx.subType?.includes("ปรับยอด");
+    if (isAdjustment) {
+      return "รายการ บันทึก ตรวจนับและปรับยอดสต๊อก";
+    }
+
+    // Find operator/employee department
+    const employee = employees.find(e => e.id === tx.operatorId);
+    const empDept = employee?.department || "สโตร์กลาง";
+
+    // Find custom flow
+    const flow = deliveryFlows.find(f => f.name === tx.subType);
+    if (flow) {
+      let fromDept = flow.from;
+      let toDept = flow.to;
+      if (fromDept === "สโตร์กลาง") {
+        fromDept = empDept;
+      }
+      if (toDept === "สโตร์กลาง") {
+        toDept = empDept;
+      }
+      return `รายการ บันทึกการส่งงาน ${fromDept} - ${toDept}`;
+    }
+
+    // Legacy fallback mappings
+    let fromDept = "สโตร์กลาง";
+    let toDept = "สโตร์ FG";
+
+    if (tx.subType?.includes("รับเข้า") || tx.subType?.includes("รับคืน")) {
+      fromDept = "ไลน์ผลิต";
+      toDept = empDept;
+    } else if (tx.subType?.includes("rework") || tx.subType?.includes("Rework")) {
+      fromDept = empDept;
+      toDept = "ไลน์ผลิต";
+    } else if (tx.subType?.includes("FG") || tx.subType?.includes("ส่งมอบ")) {
+      fromDept = empDept;
+      toDept = "สโตร์ FG";
+    } else {
+      fromDept = empDept;
+    }
+
+    return `รายการ บันทึกการส่งงาน ${fromDept} - ${toDept}`;
+  };
+
   // Printing Slip and Updating Printed state
   const handlePrintSlip = async () => {
     if (selectedTransactions.length === 0) {
@@ -467,56 +631,123 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
                 <title>WSM-DUNAN - ใบจัดเตรียมรับเข้า-ส่งมอบ</title>
                 <style>
                   @import url('https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&display=swap');
+                  @media print {
+                    @page {
+                      size: A4 portrait;
+                      margin: 10mm 15mm 15mm 15mm;
+                    }
+                    body {
+                      margin: 0;
+                      padding: 0;
+                      background-color: white !important;
+                      -webkit-print-color-adjust: exact;
+                      print-color-adjust: exact;
+                    }
+                    .print-page {
+                      width: 100% !important;
+                      min-height: 250mm !important;
+                      box-shadow: none !important;
+                      border: none !important;
+                      border-radius: 0 !important;
+                      margin-bottom: 0 !important;
+                      padding: 0 !important;
+                      page-break-after: always !important;
+                      display: flex !important;
+                      flex-direction: column !important;
+                    }
+                    .print-page:last-child {
+                      page-break-after: avoid !important;
+                    }
+                  }
                   body {
                     font-family: "Tahoma", "Kanit", "Microsoft Sans Serif", "MS Sans Serif", sans-serif;
-                    padding: 30px;
                     background-color: white;
                     color: black;
+                    margin: 0;
+                    padding: 0;
                   }
-                  .text-lg { font-size: 1.25rem; font-weight: bold; }
-                  .text-xs { font-size: 0.75rem; }
-                  .text-sm { font-size: 0.875rem; }
-                  .font-bold { font-weight: bold; }
-                  .text-gray-900 { color: #000; }
-                  .text-gray-800 { color: #222; }
-                  .text-gray-500 { color: #555; }
-                  .text-gray-400 { color: #777; }
-                  .bg-black { background-color: #000 !important; color: white !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-                  .text-white { color: white !important; }
-                  .bg-gray-50 { background-color: #f9f9f9; }
-                  .bg-gray-100 { background-color: #f1f1f1; }
-                  .border-b-2 { border-bottom: 2px solid black; }
-                  .border-b { border-bottom: 1px solid #ddd; }
-                  .border { border: 1px solid #000; border-collapse: collapse; }
-                  .p-2 { padding: 8px; }
-                  .p-2.5 { padding: 10px; }
-                  .p-4 { padding: 16px; }
-                  .p-8 { padding: 32px; }
-                  .pb-4 { padding-bottom: 16px; }
-                  .pt-10 { padding-top: 40px; }
-                  .mb-2 { margin-bottom: 8px; }
-                  .mt-1 { margin-top: 4px; }
-                  .mt-0.5 { margin-top: 2px; }
-                  .space-y-6 > * + * { margin-top: 24px; }
-                  .space-y-2 > * + * { margin-top: 8px; }
-                  .space-y-12 > * + * { margin-top: 48px; }
-                  .grid { display: flex; flex-direction: row; justify-content: space-between; }
-                  .grid > div { width: 48%; }
-                  .w-full { width: 100%; }
-                  .text-right { text-align: right; }
-                  .text-center { text-align: center; }
-                  .underline { text-decoration: underline; }
-                  .rounded-xl { border-radius: 8px; }
-                  .rounded { border-radius: 4px; }
-                  .uppercase { text-transform: uppercase; }
-                  .tracking-tight { letter-spacing: -0.025em; }
-                  .tracking-wider { letter-spacing: 0.05em; }
-                  .border-dashed { border-style: dashed; border-color: #999; }
-                  .h-0.5 { height: 2px; }
-                  .w-44 { width: 176px; }
-                  .mx-auto { margin-left: auto; margin-right: auto; }
-                  th, td { border: 1px solid black; padding: 8px; font-size: 11px; }
-                  th { background-color: #f2f2f2 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+                  .print-page {
+                    width: 100%;
+                    max-width: 180mm;
+                    margin: 0 auto;
+                    min-height: 250mm;
+                    position: relative;
+                    box-sizing: border-box;
+                    display: flex;
+                    flex-direction: column;
+                    padding: 10px;
+                  }
+                  .print-table {
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin-bottom: 20px;
+                  }
+                  .print-table th, .print-table td {
+                    border: 2px solid black !important;
+                    padding: 8px 6px;
+                    font-size: 11px;
+                    color: black;
+                    vertical-align: middle;
+                  }
+                  .print-table th {
+                    background-color: #cbd5e1 !important;
+                    font-weight: bold;
+                    text-align: center;
+                    -webkit-print-color-adjust: exact;
+                    print-color-adjust: exact;
+                  }
+                  .print-table td {
+                    background-color: white !important;
+                    text-align: left;
+                  }
+                  .title-header {
+                    font-size: 16px !important;
+                    padding: 10px !important;
+                    font-weight: bold;
+                    text-align: center;
+                  }
+                  .meta-header {
+                    font-size: 13px !important;
+                    font-weight: bold;
+                    text-align: center;
+                  }
+                  .meta-value {
+                    font-size: 13px !important;
+                    font-weight: bold;
+                    text-align: center;
+                  }
+                  .highlight-shift {
+                    background-color: #fef08a !important;
+                    -webkit-print-color-adjust: exact;
+                    print-color-adjust: exact;
+                  }
+                  .signatures-container {
+                    margin-top: auto;
+                    padding-top: 30px;
+                    display: flex;
+                    justify-content: space-between;
+                    width: 100%;
+                  }
+                  .signature-box {
+                    width: 45%;
+                    text-align: center;
+                    font-size: 11px;
+                  }
+                  .signature-line {
+                    height: 1px;
+                    background-color: black;
+                    width: 180px;
+                    margin: 35px auto 5px auto;
+                  }
+                  .page-footer {
+                    text-align: right;
+                    font-size: 11px;
+                    color: black;
+                    margin-top: 15px;
+                    border-top: 1px dashed #ccc;
+                    padding-top: 5px;
+                    width: 100%;
+                  }
                 </style>
               </head>
               <body>
@@ -620,7 +851,7 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
         </div>
 
         {/* Filters Grid matching screenshot */}
-        <div className="grid grid-cols-2 md:grid-cols-6 gap-3 bg-gray-50/50 p-4 rounded-xl border border-gray-100 text-xs">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-3 bg-gray-50/50 p-4 rounded-xl border border-gray-100 text-xs">
           <div>
             <label className="text-gray-500 font-semibold mb-1 block">ตั้งแต่</label>
             <input
@@ -725,6 +956,21 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
               <option value="all">ทั้งหมด</option>
               <option value="unprinted">ยังไม่พิมพ์</option>
               <option value="printed">พิมพ์แล้ว</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-gray-500 font-semibold mb-1 block">กะทำงาน (Shift)</label>
+            <select
+              value={printShift}
+              onChange={(e) => {
+                setPrintShift(e.target.value);
+                setSelectedTxIds([]);
+              }}
+              className="w-full p-2 bg-white border border-gray-200 rounded-lg font-semibold focus:ring-2 focus:ring-red-500/20 focus:border-red-500 focus:outline-none"
+            >
+              <option value="all">ทั้งหมด (All)</option>
+              <option value="DAY">DAY (กะวัน)</option>
+              <option value="NIGHT">NIGHT (กะคืน)</option>
             </select>
           </div>
         </div>
@@ -859,46 +1105,112 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
           </div>
         </div>
 
-        {/* Month Year select filter bar */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 bg-gray-50/50 p-3 rounded-xl border border-gray-100">
-          <div>
-            <select
-              value={filterMonth}
-              onChange={(e) => setFilterMonth(Number(e.target.value))}
-              className="w-full p-2 bg-white border border-gray-200 rounded-lg text-xs font-semibold focus:outline-none"
-            >
-              {thaiMonths.map((m, idx) => (
-                <option key={idx} value={idx + 1}>
-                  {m}
-                </option>
-              ))}
-            </select>
+        {/* Month Year select filter bar with advanced search and additional filters */}
+        <div className="space-y-3 bg-gray-50/50 p-4 rounded-xl border border-gray-100">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+            <div>
+              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 block">ประจำเดือน</label>
+              <select
+                value={filterMonth}
+                onChange={(e) => {
+                  setFilterMonth(Number(e.target.value));
+                  setMonthlyDay("all"); // Reset day filter on month change
+                }}
+                className="w-full p-2 bg-white border border-gray-200 rounded-lg text-xs font-semibold focus:ring-2 focus:ring-red-500/20 focus:border-red-500 focus:outline-none"
+              >
+                {thaiMonths.map((m, idx) => (
+                  <option key={idx} value={idx + 1}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 block">ประจำปี</label>
+              <select
+                value={filterYear}
+                onChange={(e) => {
+                  setFilterYear(Number(e.target.value));
+                  setMonthlyDay("all"); // Reset day filter on year change
+                }}
+                className="w-full p-2 bg-white border border-gray-200 rounded-lg text-xs font-semibold focus:ring-2 focus:ring-red-500/20 focus:border-red-500 focus:outline-none"
+              >
+                {years.map((y) => (
+                  <option key={y} value={y}>
+                    พ.ศ. {y + 543}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 block">ประเภทธุรกรรม</label>
+              <select
+                value={filterType}
+                onChange={(e) => setFilterType(e.target.value as any)}
+                className="w-full p-2 bg-white border border-gray-200 rounded-lg text-xs font-semibold focus:ring-2 focus:ring-red-500/20 focus:border-red-500 focus:outline-none"
+              >
+                <option value="all">ดูรายการทั้งหมด</option>
+                <option value="in">เฉพาะรับเข้า (In)</option>
+                <option value="out">เฉพาะโอนออก (Out)</option>
+                <option value="adj_in">เฉพาะปรับสต๊อกเข้า (Adjust In)</option>
+                <option value="adj_out">เฉพาะปรับสต๊อกออก (Adjust Out)</option>
+              </select>
+            </div>
           </div>
-          <div>
-            <select
-              value={filterYear}
-              onChange={(e) => setFilterYear(Number(e.target.value))}
-              className="w-full p-2 bg-white border border-gray-200 rounded-lg text-xs font-semibold focus:outline-none"
-            >
-              {years.map((y) => (
-                <option key={y} value={y}>
-                  พ.ศ. {y + 543}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <select
-              value={filterType}
-              onChange={(e) => setFilterType(e.target.value as any)}
-              className="w-full p-2 bg-white border border-gray-200 rounded-lg text-xs font-semibold focus:outline-none"
-            >
-              <option value="all">ดูรายการทั้งหมด</option>
-              <option value="in">เฉพาะรับเข้า (In)</option>
-              <option value="out">เฉพาะโอนออก (Out)</option>
-              <option value="adj_in">เฉพาะปรับสต๊อกเข้า (Adjust In)</option>
-              <option value="adj_out">เฉพาะปรับสต๊อกออก (Adjust Out)</option>
-            </select>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-2 border-t border-gray-100">
+            <div>
+              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 block">ค้นหาข้อมูล (SAP No, Part No, ลูกค้า, ผู้โอน)</label>
+              <input
+                type="text"
+                value={monthlySearch}
+                onChange={(e) => setMonthlySearch(e.target.value)}
+                placeholder="พิมพ์เพื่อค้นหา..."
+                className="w-full p-2 bg-white border border-gray-200 rounded-lg text-xs font-semibold placeholder:text-gray-300 focus:ring-2 focus:ring-red-500/20 focus:border-red-500 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 block">ระบุกะ (Shift)</label>
+              <select
+                value={monthlyShift}
+                onChange={(e) => setMonthlyShift(e.target.value)}
+                className="w-full p-2 bg-white border border-gray-200 rounded-lg text-xs font-semibold focus:ring-2 focus:ring-red-500/20 focus:border-red-500 focus:outline-none"
+              >
+                <option value="all">ทั้งหมด (All Shifts)</option>
+                <option value="DAY">DAY (กะกลางวัน)</option>
+                <option value="NIGHT">NIGHT (กะกลางคืน)</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 block">ระบุวันที่ (Day of Month)</label>
+              <select
+                value={monthlyDay}
+                onChange={(e) => setMonthlyDay(e.target.value)}
+                className="w-full p-2 bg-white border border-gray-200 rounded-lg text-xs font-semibold focus:ring-2 focus:ring-red-500/20 focus:border-red-500 focus:outline-none"
+              >
+                <option value="all">ทั้งหมด (All Days)</option>
+                {Array.from({ length: 31 }, (_, i) => String(i + 1)).map((day) => (
+                  <option key={day} value={day}>
+                    วันที่ {day}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 block">ระบุลูกค้า (Customer)</label>
+              <select
+                value={monthlyCustomer}
+                onChange={(e) => setMonthlyCustomer(e.target.value)}
+                className="w-full p-2 bg-white border border-gray-200 rounded-lg text-xs font-semibold focus:ring-2 focus:ring-red-500/20 focus:border-red-500 focus:outline-none"
+              >
+                <option value="all">ทั้งหมด (All Customers)</option>
+                {monthlyCustomers.map((cust) => (
+                  <option key={cust} value={cust}>
+                    {cust}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
 
@@ -997,129 +1309,199 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
       </div>
 
       {/* PRINT DIALOG SLIP OVERLAY PREVIEW */}
-      {slipPreviewOpen && (
-        <div className="fixed inset-0 z-[120] bg-black/60 flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white w-full max-w-2xl rounded-2xl overflow-hidden shadow-2xl border border-gray-100 flex flex-col my-8">
-            <div className="bg-black p-4 text-white flex justify-between items-center">
-              <span className="font-bold text-xs flex items-center gap-1.5">
-                <Printer className="w-4 h-4 text-red-600" /> ตรวจสอบใบโอนส่งมอบสินค้า (Transfer Slip)
-              </span>
-              <button
-                onClick={() => setSlipPreviewOpen(false)}
-                className="hover:bg-gray-800 p-1.5 rounded-full text-gray-400 cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+      {slipPreviewOpen && (() => {
+        const itemsPerPage = 12;
+        const totalQty = selectedTransactions.reduce((acc, t) => acc + t.qty, 0);
+        const chunkedPages: any[][] = [];
+        for (let i = 0; i < selectedTransactions.length; i += itemsPerPage) {
+          chunkedPages.push(selectedTransactions.slice(i, i + itemsPerPage));
+        }
+        if (chunkedPages.length === 0) {
+          chunkedPages.push([]);
+        }
 
-            {/* PRINT PORTION START */}
-            <div className="p-8 flex-1 space-y-6" id="print-area">
-              {/* Slip Header */}
-              <div className="flex justify-between items-start border-b-2 border-black pb-4 text-xs">
-                <div>
-                  <h1 className="text-lg font-bold text-gray-900 tracking-tight">WSM-DUNAN CO., LTD.</h1>
-                  <p className="text-gray-500 mt-1">คลังจัดส่งและระบบโอนย้ายสินค้า</p>
-                  <p className="text-gray-500">ใบโอนสินค้าภายใน / ใบจัดเตรียมรับเข้า-ส่งมอบ</p>
-                </div>
-                <div className="text-right">
-                  <span className="bg-black text-white text-[10px] px-2.5 py-1 rounded font-bold uppercase tracking-wider block mb-2">
-                    {printType === "all" ? "ทั้งหมด" : printType === "all_in" ? "รับเข้าทั้งหมด" : printType === "all_out" ? "โอนออกทั้งหมด" : printType}
-                  </span>
-                  <p className="text-gray-500">วันที่พิมพ์: {new Date().toLocaleDateString("th-TH")}</p>
-                  <p className="text-gray-500">เวลากำหนด: {new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} น.</p>
-                </div>
+        return (
+          <div className="fixed inset-0 z-[120] bg-black/80 flex items-center justify-center p-4 overflow-y-auto">
+            <div className="bg-slate-100 w-full max-w-[850px] rounded-2xl overflow-hidden shadow-2xl border border-gray-100 flex flex-col my-8 h-[90vh]">
+              <div className="bg-black p-4 text-white flex justify-between items-center shrink-0">
+                <span className="font-bold text-xs flex items-center gap-1.5">
+                  <Printer className="w-4 h-4 text-red-600" /> ตรวจสอบใบโอนส่งมอบสินค้า (A4 Portrait Print Preview)
+                </span>
+                <button
+                  onClick={() => setSlipPreviewOpen(false)}
+                  className="hover:bg-gray-800 p-1.5 rounded-full text-gray-400 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
               </div>
 
-              {/* Meta details */}
-              <div className="grid grid-cols-2 gap-4 text-xs bg-gray-50 p-4 border rounded-xl">
-                <div>
-                  <p className="text-gray-400">ผู้ส่งมอบ/รับเข้าสินค้า:</p>
-                  <p className="font-bold text-gray-800 mt-0.5">
-                    {printOperator === "all" ? "พนักงานแผนกโอนย้ายรวม" : employees.find((e) => e.id === printOperator)?.name || "System Operator"}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-gray-400">ลูกค้าแบรนด์ปลายทาง:</p>
-                  <p className="font-bold text-gray-800 mt-0.5 uppercase">
-                    {printCustomer === "all" ? "ลูกค้าทั่วไปทั้งหมด" : printCustomer}
-                  </p>
-                </div>
+              {/* Scrollable pages container */}
+              <div className="flex-1 overflow-y-auto p-6 space-y-6 flex flex-col items-center bg-slate-200" id="print-area">
+                {chunkedPages.map((pageItems, pageIdx) => {
+                  const isLastPage = pageIdx === chunkedPages.length - 1;
+                  const pageQty = pageItems.reduce((acc, item) => acc + item.qty, 0);
+                  const currentShift = getSlipShift();
+                  return (
+                    <div
+                      key={pageIdx}
+                      className="print-page bg-white text-black p-8 shadow-lg border border-gray-200 rounded flex flex-col justify-between relative"
+                      style={{
+                        width: "100%",
+                        maxWidth: "700px",
+                        minHeight: "950px",
+                        boxSizing: "border-box",
+                        backgroundColor: "white",
+                        color: "black",
+                      }}
+                    >
+                      <div>
+                        {/* WSM-DUNAN Branding Top Header Section */}
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "15px", borderBottom: "2px solid black", paddingBottom: "10px" }}>
+                          <div>
+                            <h2 style={{ margin: 0, fontSize: "16px", fontWeight: "bold", color: "black", letterSpacing: "0.5px" }}>
+                              WSM-DUNAN CO., LTD.
+                            </h2>
+                            <p style={{ margin: "2px 0 0 0", fontSize: "11px", color: "#334155", fontWeight: "bold" }}>
+                              คลังจัดส่งและระบบโอนย้ายสินค้า
+                            </p>
+                            <p style={{ margin: "2px 0 0 0", fontSize: "10px", color: "#64748b", fontWeight: "bold" }}>
+                              ใบโอนสินค้าภายใน / ใบจัดเตรียมรับเข้า-ส่งมอบ
+                            </p>
+                          </div>
+                          <div style={{ textAlign: "right" }}>
+                            <span style={{
+                              display: "inline-block",
+                              padding: "3px 12px",
+                              borderRadius: "9999px",
+                              fontSize: "11px",
+                              fontWeight: "bold",
+                              backgroundColor: getShiftBgColor(currentShift),
+                              color: getShiftTextColor(currentShift),
+                              border: "1px solid rgba(0,0,0,0.15)",
+                              marginBottom: "4px"
+                            }}>
+                              {currentShift === "DAY" ? "DAY" : currentShift === "NIGHT" ? "NIGHT" : "ทั้งหมด"}
+                            </span>
+                            <p style={{ margin: 0, fontSize: "10px", color: "black", fontWeight: "bold" }}>
+                              วันที่พิมพ์: {new Date().getDate()}/{new Date().getMonth() + 1}/{new Date().getFullYear() + 543}
+                            </p>
+                            <p style={{ margin: "2px 0 0 0", fontSize: "10px", color: "black", fontWeight: "bold" }}>
+                              เวลากำหนด: {new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true })} น.
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Table of items */}
+                        <table className="print-table w-full" style={{ width: "100%", borderCollapse: "collapse" }}>
+                          <thead>
+                            <tr>
+                              <th colSpan={7} className="title-header" style={{ backgroundColor: "#cbd5e1", color: "black", border: "2px solid black", padding: "10px", textAlign: "center", fontSize: "15px", fontWeight: "bold" }}>
+                                {getDynamicPrintedTitle()}
+                              </th>
+                            </tr>
+                            <tr>
+                              <th style={{ backgroundColor: "#cbd5e1", color: "black", border: "2px solid black", padding: "6px", fontSize: "11px", fontWeight: "bold", textAlign: "center", width: "10%" }}>ลำดับ</th>
+                              <th style={{ backgroundColor: "#cbd5e1", color: "black", border: "2px solid black", padding: "6px", fontSize: "11px", fontWeight: "bold", textAlign: "center", width: "12%" }}>Customer</th>
+                              <th style={{ backgroundColor: "#cbd5e1", color: "black", border: "2px solid black", padding: "6px", fontSize: "11px", fontWeight: "bold", textAlign: "center", width: "22%" }}>Part No.</th>
+                              <th style={{ backgroundColor: "#cbd5e1", color: "black", border: "2px solid black", padding: "6px", fontSize: "11px", fontWeight: "bold", textAlign: "center", width: "10%" }}>Q'ty</th>
+                              <th style={{ backgroundColor: "#cbd5e1", color: "black", border: "2px solid black", padding: "6px", fontSize: "11px", fontWeight: "bold", textAlign: "center", width: "16%" }}>ผู้โอน</th>
+                              <th style={{ backgroundColor: "#cbd5e1", color: "black", border: "2px solid black", padding: "6px", fontSize: "11px", fontWeight: "bold", textAlign: "center", width: "15%" }}>จำนวน บรรจุ</th>
+                              <th style={{ backgroundColor: "#cbd5e1", color: "black", border: "2px solid black", padding: "6px", fontSize: "11px", fontWeight: "bold", textAlign: "center", width: "15%" }}>Time</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {pageItems.map((item, i) => {
+                              const overallIndex = pageIdx * itemsPerPage + i + 1;
+                              const formattedIndex = "CS-" + String(overallIndex).padStart(4, "0");
+                              return (
+                                <tr key={item.id || i}>
+                                  <td style={{ border: "2px solid black", padding: "6px", fontSize: "11px", textAlign: "center", fontWeight: "bold", color: "black" }}>{formattedIndex}</td>
+                                  <td style={{ border: "2px solid black", padding: "6px", fontSize: "11px", textAlign: "left", color: "black" }}>{item.customer}</td>
+                                  <td style={{ border: "2px solid black", padding: "6px", fontSize: "11px", textAlign: "left", fontWeight: "bold", color: "black" }}>{item.partNo}</td>
+                                  <td style={{ border: "2px solid black", padding: "6px", fontSize: "11px", textAlign: "right", fontWeight: "bold", color: "black" }}>{item.qty.toLocaleString()}</td>
+                                  <td style={{ border: "2px solid black", padding: "6px", fontSize: "11px", textAlign: "left", color: "black" }}>{item.operatorName}</td>
+                                  <td style={{ border: "2px solid black", padding: "6px", fontSize: "11px", textAlign: "left", fontWeight: "bold", color: "black" }}>{getPackingInfo(item)}</td>
+                                  <td style={{ border: "2px solid black", padding: "6px", fontSize: "11px", textAlign: "center", color: "black" }}>{formatThaiDateTime(item.timestamp)}</td>
+                                </tr>
+                              );
+                            })}
+
+                            {/* Page total quantity summary */}
+                            <tr style={{ backgroundColor: "#f8fafc" }}>
+                              <td colSpan={3} style={{ border: "2px solid black", padding: "6px", fontSize: "11px", textAlign: "right", fontWeight: "bold", color: "black" }}>
+                                สรุปประจำหน้า {pageIdx + 1} (Page Qty Total):
+                              </td>
+                              <td style={{ border: "2px solid black", padding: "6px", fontSize: "11px", textAlign: "right", fontWeight: "extrabold", color: "black" }}>
+                                {pageQty.toLocaleString()}
+                              </td>
+                              <td colSpan={3} style={{ border: "2px solid black", padding: "6px", fontSize: "11px", color: "black", fontWeight: "bold" }}>
+                                ชิ้น (Pcs)
+                              </td>
+                            </tr>
+
+                            {/* Grand total quantity summary on the last page */}
+                            {isLastPage && (
+                              <tr style={{ backgroundColor: "#fef08a" }}>
+                                <td colSpan={3} style={{ border: "2px solid black", padding: "6px", fontSize: "11px", textAlign: "right", fontWeight: "extrabold", color: "black" }}>
+                                  สรุปรวมทั้งสิ้น (Grand Total Qty):
+                                </td>
+                                <td style={{ border: "2px solid black", padding: "6px", fontSize: "11px", textAlign: "right", fontWeight: "extrabold", color: "#b91c1c" }}>
+                                  {totalQty.toLocaleString()}
+                                </td>
+                                <td colSpan={3} style={{ border: "2px solid black", padding: "6px", fontSize: "11px", color: "black", fontWeight: "bold" }}>
+                                  ชิ้น (Pcs)
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {/* Push signatures & page footer to bottom */}
+                      <div className="w-full mt-auto flex flex-col">
+                        {isLastPage && (
+                          <div className="signatures-container w-full" style={{ display: "flex", justifyContent: "space-between", paddingTop: "30px", width: "100%" }}>
+                            <div className="signature-box" style={{ width: "45%", textAlign: "center", fontSize: "11px" }}>
+                              <p style={{ margin: 0, fontWeight: "bold", color: "black" }}>ลงชื่อผู้ทำการจัดโอนสินค้า (ผู้ส่งมอบ)</p>
+                              <div className="signature-line" style={{ height: "1px", backgroundColor: "black", width: "180px", margin: "35px auto 5px auto" }}></div>
+                              <p style={{ margin: 0, color: "#444" }}>( ............................................................ )</p>
+                            </div>
+                            <div className="signature-box" style={{ width: "45%", textAlign: "center", fontSize: "11px" }}>
+                              <p style={{ margin: 0, fontWeight: "bold", color: "black" }}>ลงชื่อผู้ทำการตรวจรับเข้าสโตร์ (ผู้รับสินค้า)</p>
+                              <div className="signature-line" style={{ height: "1px", backgroundColor: "black", width: "180px", margin: "35px auto 5px auto" }}></div>
+                              <p style={{ margin: 0, color: "#444" }}>( ............................................................ )</p>
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="page-footer" style={{ textAlign: "right", fontSize: "11px", color: "black", marginTop: "15px", borderTop: "1px dashed #ccc", paddingTop: "5px", width: "100%" }}>
+                          หน้าที่ {pageIdx + 1} จาก {chunkedPages.length}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
 
-              {/* Transactions list */}
-              <div className="space-y-2 text-xs">
-                <p className="font-bold text-gray-800">รายการสินค้า (พาร์ท) ที่ทำการจัดโอนย้าย:</p>
-                <table className="w-full text-left border">
-                  <thead>
-                    <tr className="bg-gray-100 border-b">
-                      <th className="p-2 border-r">รหัสสินค้า (Part No)</th>
-                      <th className="p-2 border-r">ชื่อพาร์ทสินค้า (Part Name)</th>
-                      <th className="p-2 border-r text-center">กะจริง (Shift)</th>
-                      <th className="p-2 border-r">พิกัด Location</th>
-                      <th className="p-2 text-right">จำนวนชิ้น Qty</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selectedTransactions.map((item, i) => (
-                      <tr key={i} className="border-b">
-                        <td className="p-2 border-r font-bold text-gray-900">{item.partNo}</td>
-                        <td className="p-2 border-r text-gray-600 max-w-[150px] truncate">{item.partName}</td>
-                        <td className="p-2 border-r text-center font-bold">
-                          {getResolvedShiftForTime(item.timestamp)}
-                        </td>
-                        <td className="p-2 border-r font-medium text-gray-600">{item.location}</td>
-                        <td className="p-2 text-right font-bold text-gray-900">{item.qty.toLocaleString()}</td>
-                      </tr>
-                    ))}
-                    <tr className="bg-gray-50/50 font-bold">
-                      <td colSpan={4} className="p-2 border-r text-right uppercase">ยอดรวมรายการจัดโอนทั้งสิ้น:</td>
-                      <td className="p-2 text-right text-sm underline underline-offset-4">
-                        {selectedTransactions.reduce((acc, t) => acc + t.qty, 0).toLocaleString()} ชิ้น
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
+              <div className="p-4 bg-gray-50 border-t flex gap-2 justify-end text-xs shrink-0">
+                <button
+                  onClick={() => setSlipPreviewOpen(false)}
+                  className="px-4 py-2 border rounded-xl font-semibold hover:bg-gray-100 cursor-pointer"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  onClick={handlePrintSlip}
+                  className="bg-black text-white font-bold px-5 py-2.5 rounded-xl flex items-center gap-1 hover:bg-gray-800 cursor-pointer"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>ยืนยันพิมพ์และส่งมอบ</span>
+                </button>
               </div>
-
-              {/* Delivery signatures */}
-              <div className="grid grid-cols-2 gap-8 pt-10 border-t border-dashed">
-                <div className="text-center space-y-12">
-                  <p className="text-xs text-gray-500 font-medium">ลงชื่อผู้ทำการจัดโอนสินค้า (ผู้ส่งมอบ)</p>
-                  <div>
-                    <div className="h-0.5 w-44 bg-gray-300 mx-auto" />
-                    <p className="text-[10px] text-gray-400 mt-1.5">( ............................................................ )</p>
-                  </div>
-                </div>
-
-                <div className="text-center space-y-12">
-                  <p className="text-xs text-gray-500 font-medium">ลงชื่อผู้ทำการตรวจรับเข้าสโตร์ (ผู้รับสินค้า)</p>
-                  <div>
-                    <div className="h-0.5 w-44 bg-gray-300 mx-auto" />
-                    <p className="text-[10px] text-gray-400 mt-1.5">( ............................................................ )</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-            {/* PRINT PORTION END */}
-
-            <div className="p-4 bg-gray-50 border-t flex gap-2 justify-end text-xs">
-              <button
-                onClick={() => setSlipPreviewOpen(false)}
-                className="px-4 py-2 border rounded-xl font-semibold hover:bg-gray-100 cursor-pointer"
-              >
-                ยกเลิก
-              </button>
-              <button
-                onClick={handlePrintSlip}
-                className="bg-black text-white font-bold px-5 py-2.5 rounded-xl flex items-center gap-1 hover:bg-gray-800 cursor-pointer"
-              >
-                <Printer className="w-4 h-4" />
-                <span>ยืนยันพิมพ์และส่งมอบ</span>
-              </button>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* EDIT TRANSACTION MODAL */}
       {editingTx && (

@@ -13,13 +13,158 @@ body {
 }
 
 /* --- Windows 7 & Old Browser Compatibility Mode Overrides --- */
+
+/* Legacy Browser General Fallbacks for Tailwind v4 OKLCH Colors (covers old Chrome/Firefox/Safari) */
+@supports not (color: oklch(0 0 0)) {
+  body {
+    background-color: #fcfcfc !important;
+    color: #1a1a1a !important;
+  }
+  
+  /* Fallback Solid Colors for standard utility classes */
+  .bg-white { background-color: #ffffff !important; }
+  .bg-slate-50, .bg-gray-50, .bg-slate-50\/70, .bg-gray-50\/50, .bg-slate-50\/30 { background-color: #f8fafc !important; }
+  .bg-slate-100, .bg-gray-100 { background-color: #f1f5f9 !important; }
+  .bg-slate-200, .bg-gray-200 { background-color: #e2e8f0 !important; }
+  .bg-slate-800 { background-color: #1e293b !important; }
+  .bg-slate-900, .bg-black, .bg-[#111] { background-color: #111111 !important; }
+  
+  /* Red / Brand Alert */
+  .bg-red-50 { background-color: #fef2f2 !important; }
+  .bg-red-600, .bg-red-700 { background-color: #dc2626 !important; color: #ffffff !important; }
+  .text-red-500, .text-red-600, .text-red-700 { color: #dc2626 !important; }
+  
+  /* Green / Success */
+  .bg-green-50 { background-color: #f0fdf4 !important; }
+  .bg-green-500, .bg-green-600, .bg-emerald-500, .bg-emerald-600 { background-color: #16a34a !important; color: #ffffff !important; }
+  .text-green-500, .text-green-600, .text-emerald-500, .text-emerald-600 { color: #15803d !important; }
+  
+  /* Amber / Warning */
+  .bg-amber-50 { background-color: #fffbeb !important; }
+  .bg-amber-500, .bg-amber-600 { background-color: #d97706 !important; color: #ffffff !important; }
+  .text-amber-500, .text-amber-600 { color: #b45309 !important; }
+
+  /* Text Colors */
+  .text-white { color: #ffffff !important; }
+  .text-slate-300 { color: #cbd5e1 !important; }
+  .text-slate-400, .text-gray-400 { color: #94a3b8 !important; }
+  .text-slate-500, .text-gray-500 { color: #64748b !important; }
+  .text-slate-700, .text-gray-700 { color: #334155 !important; }
+  .text-slate-800, .text-gray-800 { color: #1e293b !important; }
+  .text-slate-900, .text-gray-900 { color: #0f172a !important; }
+  
+  /* Borders */
+  .border, .border-slate-200, .border-gray-200 { border: 1px solid #cbd5e1 !important; }
+  .border-white\/5, .border-white\/10 { border: 1px solid #334155 !important; }
+}
+
+/* Explicit class-based overrides when Windows 7 mode is toggled on */
 .win7-mode {
-  /* Use standard Thai-native system font stacks that are extremely sharp and compatible with Windows 7 */
   font-family: "Tahoma", "Microsoft Sans Serif", "MS Sans Serif", sans-serif !important;
 }
 
 .win7-mode body {
   font-family: "Tahoma", "Microsoft Sans Serif", "MS Sans Serif", sans-serif !important;
+  background-color: #f1f5f9 !important; /* solid clean gray background */
+  color: #000000 !important;
+}
+
+/* Prevent sticky-induced vertical overlapping of table elements */
+.win7-mode thead,
+.win7-mode tbody,
+.win7-mode tr,
+.win7-mode th,
+.win7-mode td,
+.win7-mode .sticky {
+  position: static !important;
+}
+
+/* Prevent text clipping / line height collapsing in table structures */
+.win7-mode table {
+  border-collapse: collapse !important;
+  width: 100% !important;
+  background-color: #ffffff !important;
+  color: #000000 !important;
+}
+
+.win7-mode th {
+  background-color: #e2e8f0 !important; /* Light Slate */
+  color: #000000 !important;
+  font-weight: bold !important;
+  border: 1px solid #94a3b8 !important;
+  padding: 8px 10px !important;
+  text-align: left !important;
+  font-size: 11px !important;
+}
+
+.win7-mode td {
+  background-color: #ffffff !important;
+  color: #000000 !important;
+  border: 1px solid #cbd5e1 !important;
+  padding: 8px 10px !important;
+  font-size: 11px !important;
+}
+
+.win7-mode tr:hover td {
+  background-color: #f1f5f9 !important;
+}
+
+/* Fallback Margin Spacing for Gaps in Flex and Grid layouts on older browsers */
+.win7-mode .flex-row > * {
+  margin-right: 8px !important;
+}
+.win7-mode .flex-row > *:last-child {
+  margin-right: 0 !important;
+}
+.win7-mode .flex-col > * {
+  margin-bottom: 8px !important;
+}
+.win7-mode .flex-col > *:last-child {
+  margin-bottom: 0 !important;
+}
+
+/* Fallback for CSS Grid layout failures causing grid items to overlap */
+.win7-mode .grid {
+  display: block !important;
+}
+.win7-mode .grid > * {
+  width: 100% !important;
+  margin-bottom: 12px !important;
+  display: block !important;
+}
+
+@media (min-width: 768px) {
+  .win7-mode .grid-cols-2 > * {
+    display: inline-block !important;
+    width: 48% !important;
+    margin-right: 3% !important;
+    vertical-align: top !important;
+  }
+  .win7-mode .grid-cols-2 > *:nth-child(2n) {
+    margin-right: 0 !important;
+  }
+  .win7-mode .grid-cols-3 > * {
+    display: inline-block !important;
+    width: 31% !important;
+    margin-right: 3% !important;
+    vertical-align: top !important;
+  }
+  .win7-mode .grid-cols-3 > *:nth-child(3n) {
+    margin-right: 0 !important;
+  }
+}
+
+/* Ensure buttons are solid, have visible borders and text is readable */
+.win7-mode button,
+.win7-mode input,
+.win7-mode select,
+.win7-mode textarea {
+  border-radius: 4px !important;
+  border: 1px solid #475569 !important;
+  background-color: #ffffff !important;
+  color: #000000 !important;
+  padding: 6px 12px !important;
+  text-shadow: none !important;
 }
 
 /* Disable backdrop-filter blur for older web engines where blur is blacked out or causes crash */
@@ -33,11 +178,87 @@ body {
   transition: none !important;
   animation: none !important;
   text-shadow: none !important;
+  box-shadow: none !important;
 }
 
-/* Prevent text clipping in input elements on older web engines */
-.win7-mode input, .win7-mode select, .win7-mode textarea {
-  border-radius: 4px !important;
+/* Solid High-Contrast Colors specifically for Win 7 Mode */
+.win7-mode .bg-white { background-color: #ffffff !important; }
+.win7-mode .bg-slate-50, .win7-mode .bg-gray-50, .win7-mode .bg-slate-50\/70, .win7-mode .bg-gray-50\/50, .win7-mode .bg-slate-50\/30 {
+  background-color: #f8fafc !important;
+}
+.win7-mode .bg-slate-100, .win7-mode .bg-gray-100 { background-color: #e2e8f0 !important; }
+.win7-mode .bg-slate-200, .win7-mode .bg-gray-200 { background-color: #cbd5e1 !important; }
+.win7-mode .bg-[#111], .win7-mode .bg-slate-900, .win7-mode .bg-black {
+  background-color: #1e293b !important;
+}
+
+/* Specific Sidebar Overrides in Win 7 Mode */
+.win7-mode aside,
+.win7-mode aside * {
+  color: #e2e8f0 !important;
+}
+.win7-mode aside button {
+  border-color: #475569 !important;
+}
+
+/* Ensure active tab in sidebar is highly visible */
+.win7-mode aside .bg-red-600 {
+  background-color: #dc2626 !important;
+  color: #ffffff !important;
+}
+
+/* Vibrant Button Overrides in Win 7 Mode */
+.win7-mode .bg-red-600,
+.win7-mode .bg-red-700 {
+  background-color: #dc2626 !important;
+  color: #ffffff !important;
+  border-color: #b91c1c !important;
+}
+.win7-mode .text-red-500,
+.win7-mode .text-red-600,
+.win7-mode .text-red-700 {
+  color: #dc2626 !important;
+}
+
+.win7-mode .bg-green-500,
+.win7-mode .bg-green-600,
+.win7-mode .bg-emerald-500,
+.win7-mode .bg-emerald-600 {
+  background-color: #16a34a !important;
+  color: #ffffff !important;
+  border-color: #15803d !important;
+}
+.win7-mode .text-green-500,
+.win7-mode .text-green-600,
+.win7-mode .text-emerald-500,
+.win7-mode .text-emerald-600 {
+  color: #15803d !important;
+}
+
+.win7-mode .bg-amber-500,
+.win7-mode .bg-amber-600 {
+  background-color: #d97706 !important;
+  color: #ffffff !important;
+  border-color: #b45309 !important;
+}
+.win7-mode .text-amber-500,
+.win7-mode .text-amber-600 {
+  color: #b45309 !important;
+}
+
+/* High Contrast Readable Text inside main panel in Win 7 Mode */
+.win7-mode .text-white { color: #ffffff !important; }
+.win7-mode .text-gray-900, .win7-mode .text-slate-900, .win7-mode .text-slate-800 {
+  color: #000000 !important;
+}
+.win7-mode .text-gray-700, .win7-mode .text-slate-700 {
+  color: #111111 !important;
+}
+.win7-mode .text-gray-600, .win7-mode .text-slate-600, .win7-mode .text-gray-500, .win7-mode .text-slate-500 {
+  color: #1e293b !important; /* Make gray/slate text extremely dark and visible */
+}
+.win7-mode .text-gray-400, .win7-mode .text-slate-400 {
+  color: #334155 !important; /* Force darker gray for light-gray text */
 }
 
 /* Custom styles for printing */

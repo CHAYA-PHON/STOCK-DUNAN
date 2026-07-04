@@ -39,7 +39,15 @@ import {
 export default function App() {
   // Windows 7 / Old Browser Compatibility Mode State
   const [win7Mode, setWin7Mode] = useState<boolean>(() => {
-    return localStorage.getItem("win7_compatibility_mode") === "true";
+    const stored = localStorage.getItem("win7_compatibility_mode");
+    if (stored !== null) return stored === "true";
+    // Proactive auto-detection of Windows 7 (NT 6.1), Vista (NT 6.0), or older Windows NT versions
+    if (typeof navigator !== "undefined" && navigator.userAgent) {
+      const ua = navigator.userAgent;
+      const isOldWin = ua.includes("Windows NT 6.1") || ua.includes("Windows NT 6.0") || ua.includes("Windows NT 5.");
+      return isOldWin;
+    }
+    return false;
   });
 
   useEffect(() => {

@@ -239,6 +239,15 @@ export default function StockInView({ currentUser }: StockInViewProps) {
     }
     if (!newTypeName.trim()) return;
     try {
+      // Add to deliveryFlows collection
+      const newRef = doc(collection(db, "deliveryFlows"));
+      await setDoc(newRef, {
+        type: "รับงาน",
+        name: newTypeName.trim(),
+        from: "ไลน์ผลิต",
+        to: "สโตร์กลาง"
+      });
+
       const updated = [...inTypes, newTypeName.trim()];
       await setDoc(doc(db, "settings", "general"), { inTypes: updated }, { merge: true });
       setSubType(newTypeName.trim());

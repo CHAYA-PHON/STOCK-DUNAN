@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from "react";
-import { collection, doc, writeBatch, setDoc, onSnapshot } from "firebase/firestore";
+import { collection, doc, writeBatch, setDoc, onSnapshot, deleteDoc } from "firebase/firestore";
 import { db, auth } from "../firebase";
 import { signInWithPopup, GoogleAuthProvider } from "firebase/auth";
 import { Employee } from "../types";
 import { 
   Settings, Shield, Plus, Key, Layers, Compass, HelpCircle, User, 
-  Phone, Image, Calendar, History, UploadCloud, Loader2, CloudLightning, CheckCircle2 
+  Phone, Image, Calendar, History, UploadCloud, Loader2, CloudLightning, CheckCircle2,
+  Trash2, Edit, ArrowRight
 } from "lucide-react";
 
 interface SettingsViewProps {
@@ -48,6 +49,14 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
   // History list of location batches
   const [batches, setBatches] = useState<LocationBatch[]>([]);
 
+  // Delivery Flow settings states
+  const [deliveryFlows, setDeliveryFlows] = useState<any[]>([]);
+  const [flowType, setFlowType] = useState("รับงาน");
+  const [flowName, setFlowName] = useState("");
+  const [flowFrom, setFlowFrom] = useState("");
+  const [flowTo, setFlowTo] = useState("");
+  const [editingFlow, setEditingFlow] = useState<any | null>(null);
+
   const isAuthorized = currentUser?.role === "admin" || currentUser?.role === "leader";
 
   // Sync profile editing fields with current logged-in user when it changes
@@ -76,6 +85,145 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
     });
     return unsub;
   }, []);
+
+  // Read and seed dynamic delivery flows
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "deliveryFlows"), async (snapshot) => {
+      if (snapshot.empty) {
+        // Seed default flows!
+        const defaultFlows = [
+          { type: "รับงาน", name: "รับเข้าจากฝ่ายผลิต", from: "ไลน์ผลิต", to: "สโตร์กลาง" },
+          { type: "รับงาน", name: "รับเข้าคืนซ่อม (Rework)", from: "ไลน์ผลิต", to: "สโตร์กลาง" },
+          { type: "รับงาน", name: "รับคืนจากแผนกประกอบ", from: "แผนกประกอบ", to: "สโตร์กลาง" },
+          { type: "โอนงาน", name: "โอนย้ายภายใน", from: "สโตร์กลาง", to: "สโตร์กลาง" },
+          { type: "ส่งงาน", name: "ส่งสโตร์ FG", from: "สโตร์กลาง", to: "สโตร์ FG" },
+          { type: "โอนงาน", name: "เบิกงาน Rework", from: "สโตร์กลาง", to: "ไลน์ผลิต" },
+          { type: "โอนงาน", name: "เบิกงานจาก TN", from: "สโตร์ TN", to: "สโตร์กลาง" },
+          { type: "โอนงาน", name: "เบิกเพื่อประกอบ", from: "สโตร์กลาง", to: "แผนกประกอบ" },
+          { type: "ส่งงาน", name: "จัดส่งลูกค้า", from: "สโตร์ FG", to: "ลูกค้า" },
+          { type: "ส่งงาน", name: "ทำลายสินค้า (Scrap)", from: "สโตร์กลาง", to: "Scrap" }
+        ];
+        try {
+          const batch = writeBatch(db);
+          defaultFlows.forEach((flow) => {
+            const ref = doc(collection(db, "deliveryFlows"));
+            batch.set(ref, flow);
+          });
+          await batch.commit();
+        } catch (e) {
+          console.error("Seeding error:", e);
+        }
+      } else {
+        const items: any[] = [];
+        snapshot.forEach((d) => {
+          items.push({ id: d.id, ...d.data() });
+        });
+        setDeliveryFlows(items);
+      }
+    });
+    return unsub;
+  }, []);
+
+  const syncSettingsGeneralWithFlows = async (customFlowList?: any[]) => {
+    try {
+      let flowsToUse = customFlowList;
+      if (!flowsToUse) {
+        const { getDocs } = await import("firebase/firestore");
+        const snap = await getDocs(collection(db, "deliveryFlows"));
+        const items: any[] = [];
+        snap.forEach(d => items.push(d.data()));
+        flowsToUse = items;
+      }
+      
+      const updatedInTypes = flowsToUse.filter(f => f.type === "รับงาน").map(f => f.name);
+      const updatedOutTypes = flowsToUse.filter(f => f.type === "ส่งงาน" || f.type === "โอนงาน").map(f => f.name);
+
+      await setDoc(doc(db, "settings", "general"), {
+        inTypes: updatedInTypes,
+        outTypes: updatedOutTypes
+      }, { merge: true });
+    } catch (err) {
+      console.error("Sync general error:", err);
+    }
+  };
+
+  const handleSaveFlow = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentUser) return;
+    if (currentUser?.approved === false) {
+      alert("สิทธิ์การใช้งานของคุณคือเข้าดูระบบได้เท่านั้น ไม่สามารถดำเนินการแก้ไขข้อมูลส่วนตัวได้");
+      return;
+    }
+    if (!flowName.trim() || !flowFrom.trim() || !flowTo.trim()) {
+      alert("กรุณากรอกข้อมูลให้ครบถ้วน");
+      return;
+    }
+
+    try {
+      const flowData = {
+        type: flowType,
+        name: flowName.trim(),
+        from: flowFrom.trim(),
+        to: flowTo.trim()
+      };
+
+      if (editingFlow) {
+        await setDoc(doc(db, "deliveryFlows", editingFlow.id), flowData, { merge: true });
+        const updatedList = deliveryFlows.map(f => f.id === editingFlow.id ? { id: f.id, ...flowData } : f);
+        await syncSettingsGeneralWithFlows(updatedList);
+        alert(`แก้ไขประเภทการจัดส่ง "${flowName.trim()}" สำเร็จเรียบร้อย!`);
+        setEditingFlow(null);
+      } else {
+        const newRef = doc(collection(db, "deliveryFlows"));
+        await setDoc(newRef, flowData);
+        const updatedList = [...deliveryFlows, { id: newRef.id, ...flowData }];
+        await syncSettingsGeneralWithFlows(updatedList);
+        alert(`เพิ่มประเภทการจัดส่ง "${flowName.trim()}" สำเร็จเรียบร้อย!`);
+      }
+
+      setFlowName("");
+      setFlowFrom("");
+      setFlowTo("");
+    } catch (err) {
+      console.error(err);
+      alert("เกิดข้อผิดพลาดในการบันทึกข้อมูลประเภทการส่งงาน");
+    }
+  };
+
+  const handleDeleteFlow = async (id: string, name: string) => {
+    if (!currentUser) return;
+    if (currentUser?.approved === false) {
+      alert("สิทธิ์การใช้งานของคุณคือเข้าดูระบบได้เท่านั้น ไม่สามารถดำเนินการแก้ไขข้อมูลส่วนตัวได้");
+      return;
+    }
+
+    const confirmDelete = window.confirm(`คุณต้องการลบประเภทการจัดส่ง "${name}" หรือไม่?`);
+    if (!confirmDelete) return;
+
+    try {
+      await deleteDoc(doc(db, "deliveryFlows", id));
+      const updatedList = deliveryFlows.filter(f => f.id !== id);
+      await syncSettingsGeneralWithFlows(updatedList);
+      alert(`ลบประเภทการจัดส่ง "${name}" สำเร็จ!`);
+      if (editingFlow?.id === id) {
+        setEditingFlow(null);
+        setFlowName("");
+        setFlowFrom("");
+        setFlowTo("");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("เกิดข้อผิดพลาดในการลบประเภทการส่งงาน");
+    }
+  };
+
+  const handleEditFlow = (flow: any) => {
+    setEditingFlow(flow);
+    setFlowType(flow.type);
+    setFlowName(flow.name);
+    setFlowFrom(flow.from);
+    setFlowTo(flow.to);
+  };
 
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -639,6 +787,180 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
         </div>
 
       </div>
+
+      {/* DELIVERY FLOWS CONFIGURATION CARD */}
+      {isAuthorized && (
+        <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm space-y-6">
+          <div>
+            <h3 className="font-bold text-gray-800 flex items-center gap-2">
+              <Layers className="w-5 h-5 text-red-600" /> จัดการประเภทการจัดส่งงาน (Manage Delivery Types)
+            </h3>
+            <p className="text-xs text-gray-500 mt-1">
+              เพิ่ม ลบ หรือแก้ไขประเภทการจัดส่งงาน กำหนดต้นทางและปลายทาง สำหรับแสดงผลในระบบและพิมพ์ใบส่งงานโอนสินค้า
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+            
+            {/* Form Column */}
+            <div className="bg-slate-50/50 p-5 rounded-2xl border border-slate-100 space-y-4 h-fit">
+              <h4 className="font-bold text-xs text-gray-700 uppercase tracking-wider flex items-center gap-1.5 border-b pb-2">
+                <Plus className="w-4 h-4 text-red-600" />
+                <span>{editingFlow ? "แก้ไขประเภทการจัดส่ง" : "เพิ่มประเภทการจัดส่งใหม่"}</span>
+              </h4>
+
+              <form onSubmit={handleSaveFlow} className="space-y-4 text-xs">
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 block">กลุ่มประเภทการจัดส่ง</label>
+                  <select
+                    value={flowType}
+                    onChange={(e) => setFlowType(e.target.value)}
+                    className="w-full mt-1 px-3 py-2 border rounded-xl text-xs bg-white focus:ring-1 focus:ring-red-500"
+                  >
+                    <option value="รับงาน">รับงาน (Inward / Receiving)</option>
+                    <option value="โอนงาน">โอนงาน (Internal / Transfer)</option>
+                    <option value="ส่งงาน">ส่งงาน (Outward / Shipping)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 block">ชื่อประเภทการจัดส่ง</label>
+                  <input
+                    type="text"
+                    required
+                    value={flowName}
+                    onChange={(e) => setFlowName(e.target.value)}
+                    placeholder="เช่น รับงานเข้าจากไลน์ผลิต"
+                    className="w-full mt-1 px-3 py-2 border rounded-xl text-xs bg-white focus:ring-1 focus:ring-red-500"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-semibold text-gray-600 block">รับจาก (ต้นทาง)</label>
+                    <input
+                      type="text"
+                      required
+                      value={flowFrom}
+                      onChange={(e) => setFlowFrom(e.target.value)}
+                      placeholder="เช่น ไลน์ผลิต"
+                      className="w-full mt-1 px-3 py-2 border rounded-xl text-xs bg-white focus:ring-1 focus:ring-red-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-semibold text-gray-600 block">ส่งไป (ปลายทาง)</label>
+                    <input
+                      type="text"
+                      required
+                      value={flowTo}
+                      onChange={(e) => setFlowTo(e.target.value)}
+                      placeholder="เช่น สโตร์กลาง"
+                      className="w-full mt-1 px-3 py-2 border rounded-xl text-xs bg-white focus:ring-1 focus:ring-red-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  {editingFlow && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingFlow(null);
+                        setFlowName("");
+                        setFlowFrom("");
+                        setFlowTo("");
+                      }}
+                      className="flex-1 px-3 py-2 border text-slate-600 rounded-xl hover:bg-slate-50 transition font-bold text-xs cursor-pointer text-center"
+                    >
+                      ยกเลิก
+                    </button>
+                  )}
+                  <button
+                    type="submit"
+                    className="flex-1 bg-red-600 hover:bg-red-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5"
+                  >
+                    {editingFlow ? <CheckCircle2 className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                    <span>{editingFlow ? "บันทึกแก้ไข" : "เพิ่มข้อมูล"}</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {/* List/Table Column */}
+            <div className="xl:col-span-2 space-y-3">
+              <h4 className="font-bold text-xs text-gray-700 uppercase tracking-wider">
+                รายการประเภทการจัดส่งปัจจุบัน ({deliveryFlows.length} รายการ)
+              </h4>
+
+              <div className="border border-slate-100 rounded-2xl overflow-hidden bg-white">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-[11px] border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-100 bg-slate-50/50 text-slate-500 font-bold uppercase">
+                        <th className="py-2.5 px-3">กลุ่ม</th>
+                        <th className="py-2.5 px-3">ชื่อประเภทการจัดส่ง</th>
+                        <th className="py-2.5 px-3">เส้นทางจัดส่ง (จาก ➔ ไป)</th>
+                        <th className="py-2.5 px-3 text-center w-24">จัดการ</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {deliveryFlows.length === 0 ? (
+                        <tr>
+                          <td colSpan={4} className="py-12 text-center text-slate-400 italic">
+                            ไม่พบข้อมูลประเภทการจัดส่งในระบบ
+                          </td>
+                        </tr>
+                      ) : (
+                        deliveryFlows.map((flow) => (
+                          <tr key={flow.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition font-medium">
+                            <td className="py-2.5 px-3">
+                              <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                flow.type === "รับงาน"
+                                  ? "bg-blue-50 text-blue-600 border border-blue-100"
+                                  : flow.type === "โอนงาน"
+                                  ? "bg-amber-50 text-amber-600 border border-amber-100"
+                                  : "bg-green-50 text-green-600 border border-green-100"
+                              }`}>
+                                {flow.type}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3 font-semibold text-slate-950">{flow.name}</td>
+                            <td className="py-2.5 px-3 text-slate-600">
+                              <div className="flex items-center gap-1.5">
+                                <span className="bg-slate-100 px-2 py-0.5 rounded font-bold text-slate-700">{flow.from}</span>
+                                <ArrowRight className="w-3 h-3 text-slate-400" />
+                                <span className="bg-red-50 text-red-700 px-2 py-0.5 rounded font-bold">{flow.to}</span>
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-3 text-center flex items-center justify-center gap-1.5">
+                              <button
+                                onClick={() => handleEditFlow(flow)}
+                                className="bg-slate-50 hover:bg-slate-100 text-slate-700 p-1 rounded border border-slate-200 transition cursor-pointer"
+                                title="แก้ไขประเภทการจัดส่ง"
+                              >
+                                <Edit className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteFlow(flow.id, flow.name)}
+                                className="bg-red-50 hover:bg-red-100 text-red-600 p-1 rounded border border-red-200/30 transition cursor-pointer"
+                                title="ลบประเภทการจัดส่ง"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
 
       {/* System info */}
       <div className="bg-gray-900 text-gray-400 p-6 rounded-2xl space-y-3.5 border border-gray-800">
