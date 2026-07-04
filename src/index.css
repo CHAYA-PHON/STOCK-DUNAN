@@ -12,6 +12,34 @@ body {
   color: #1a1a1a;
 }
 
+/* --- Windows 7 & Old Browser Compatibility Mode Overrides --- */
+.win7-mode {
+  /* Use standard Thai-native system font stacks that are extremely sharp and compatible with Windows 7 */
+  font-family: "Tahoma", "Microsoft Sans Serif", "MS Sans Serif", sans-serif !important;
+}
+
+.win7-mode body {
+  font-family: "Tahoma", "Microsoft Sans Serif", "MS Sans Serif", sans-serif !important;
+}
+
+/* Disable backdrop-filter blur for older web engines where blur is blacked out or causes crash */
+.win7-mode .backdrop-blur-md, .win7-mode .backdrop-blur, .win7-mode .backdrop-blur-lg {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Simplify heavy transitions and animations to run smoothly on legacy Win 7 graphics drivers */
+.win7-mode * {
+  transition: none !important;
+  animation: none !important;
+  text-shadow: none !important;
+}
+
+/* Prevent text clipping in input elements on older web engines */
+.win7-mode input, .win7-mode select, .win7-mode textarea {
+  border-radius: 4px !important;
+}
+
 /* Custom styles for printing */
 @media print {
   body * {

@@ -109,3 +109,13 @@ export interface LocationItem {
   name: string;
   created: any;
 }
+
+export interface NotificationItem {
+  id: string;
+  title: string;
+  message: string;
+  timestamp: Date;
+  read: boolean;
+  type: "request" | "approval" | "system";
+  linkTab?: string;
+}

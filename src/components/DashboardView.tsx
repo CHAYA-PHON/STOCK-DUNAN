@@ -224,7 +224,7 @@ export default function DashboardView() {
         </div>
 
         {/* Today Activity */}
-        <div className="lg:col-span-1 bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col justify-between min-h-[180px]">
+        <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col justify-between min-h-[180px]">
           <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Today Activity (ยอดวันนี้)</span>
           <div className="flex-1 flex flex-col justify-center space-y-4 py-2">
             <div className="flex items-center justify-between">
@@ -246,15 +246,6 @@ export default function DashboardView() {
             <Clock className="w-3.5 h-3.5" />
             <span>ตัดยอดกะปัจจุบัน</span>
           </div>
-        </div>
-
-        {/* QR Scan / Firebase status card */}
-        <div className="lg:col-span-1 bg-[#111] p-6 rounded-2xl shadow-lg border border-slate-800 flex flex-col items-center justify-center text-center text-white min-h-[180px]">
-          <div className="w-12 h-12 bg-white/10 rounded-xl flex items-center justify-center mb-3">
-            <span className="text-2xl">📷</span>
-          </div>
-          <span className="text-white font-bold text-sm">Quick QR & Barcode</span>
-          <span className="text-xs text-white/50 mt-1 px-2">สแกนรหัสเพื่อทำรายการทันทีในเมนูหลัก</span>
         </div>
 
         {/* Monthly Summary Statistics */}

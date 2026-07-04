@@ -24,7 +24,7 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
   const [printEndDate, setPrintEndDate] = useState(new Date().toISOString().split("T")[0]);
   const [printOperator, setPrintOperator] = useState("all");
   const [printCustomer, setPrintCustomer] = useState("all");
-  const [printType, setPrintType] = useState("ส่งสโตร์ FG");
+  const [printType, setPrintType] = useState("all");
   const [printStatus, setPrintStatus] = useState<"all" | "unprinted" | "printed">("all");
   const [selectedTxIds, setSelectedTxIds] = useState<string[]>([]);
 
@@ -85,6 +85,25 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
     return true;
   });
 
+  // Get all unique subTypes from transactions dynamically for filtering
+  const allUniqueInSubTypes = Array.from(
+    new Set(
+      transactions
+        .filter((t) => t.type === "in" || t.type === "adj_in")
+        .map((t) => t.subType)
+        .filter((s) => s && s.trim() !== "")
+    )
+  );
+
+  const allUniqueOutSubTypes = Array.from(
+    new Set(
+      transactions
+        .filter((t) => t.type === "out" || t.type === "adj_out")
+        .map((t) => t.subType)
+        .filter((s) => s && s.trim() !== "")
+    )
+  );
+
   // Calculate printable transactions based on print filters
   const printableTransactions = transactions.filter((t) => {
     // 1. Filter by Date range (start to end inclusive)
@@ -98,7 +117,13 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
     if (printCustomer !== "all" && t.customer.toLowerCase() !== printCustomer.toLowerCase()) return false;
 
     // 4. Transfer SubType filter
-    if (printType !== "all" && t.subType !== printType) return false;
+    if (printType === "all_in") {
+      if (t.type !== "in" && t.type !== "adj_in") return false;
+    } else if (printType === "all_out") {
+      if (t.type !== "out" && t.type !== "adj_out") return false;
+    } else if (printType !== "all" && t.subType !== printType) {
+      return false;
+    }
 
     // 5. Status filter
     if (printStatus === "unprinted" && t.printed) return false;
@@ -431,8 +456,91 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
     }
 
     try {
-      // 1. Trigger browser print (standard popup)
-      window.print();
+      // Create bulletproof clean window for printing to bypass iframe constraints & support old Win 7 perfectly
+      const printContent = document.getElementById("print-area")?.innerHTML;
+      if (printContent) {
+        const printWindow = window.open("", "_blank", "width=850,height=700");
+        if (printWindow) {
+          printWindow.document.write(`
+            <html>
+              <head>
+                <title>WSM-DUNAN - ใบจัดเตรียมรับเข้า-ส่งมอบ</title>
+                <style>
+                  @import url('https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&display=swap');
+                  body {
+                    font-family: "Tahoma", "Kanit", "Microsoft Sans Serif", "MS Sans Serif", sans-serif;
+                    padding: 30px;
+                    background-color: white;
+                    color: black;
+                  }
+                  .text-lg { font-size: 1.25rem; font-weight: bold; }
+                  .text-xs { font-size: 0.75rem; }
+                  .text-sm { font-size: 0.875rem; }
+                  .font-bold { font-weight: bold; }
+                  .text-gray-900 { color: #000; }
+                  .text-gray-800 { color: #222; }
+                  .text-gray-500 { color: #555; }
+                  .text-gray-400 { color: #777; }
+                  .bg-black { background-color: #000 !important; color: white !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+                  .text-white { color: white !important; }
+                  .bg-gray-50 { background-color: #f9f9f9; }
+                  .bg-gray-100 { background-color: #f1f1f1; }
+                  .border-b-2 { border-bottom: 2px solid black; }
+                  .border-b { border-bottom: 1px solid #ddd; }
+                  .border { border: 1px solid #000; border-collapse: collapse; }
+                  .p-2 { padding: 8px; }
+                  .p-2.5 { padding: 10px; }
+                  .p-4 { padding: 16px; }
+                  .p-8 { padding: 32px; }
+                  .pb-4 { padding-bottom: 16px; }
+                  .pt-10 { padding-top: 40px; }
+                  .mb-2 { margin-bottom: 8px; }
+                  .mt-1 { margin-top: 4px; }
+                  .mt-0.5 { margin-top: 2px; }
+                  .space-y-6 > * + * { margin-top: 24px; }
+                  .space-y-2 > * + * { margin-top: 8px; }
+                  .space-y-12 > * + * { margin-top: 48px; }
+                  .grid { display: flex; flex-direction: row; justify-content: space-between; }
+                  .grid > div { width: 48%; }
+                  .w-full { width: 100%; }
+                  .text-right { text-align: right; }
+                  .text-center { text-align: center; }
+                  .underline { text-decoration: underline; }
+                  .rounded-xl { border-radius: 8px; }
+                  .rounded { border-radius: 4px; }
+                  .uppercase { text-transform: uppercase; }
+                  .tracking-tight { letter-spacing: -0.025em; }
+                  .tracking-wider { letter-spacing: 0.05em; }
+                  .border-dashed { border-style: dashed; border-color: #999; }
+                  .h-0.5 { height: 2px; }
+                  .w-44 { width: 176px; }
+                  .mx-auto { margin-left: auto; margin-right: auto; }
+                  th, td { border: 1px solid black; padding: 8px; font-size: 11px; }
+                  th { background-color: #f2f2f2 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+                </style>
+              </head>
+              <body>
+                <div>${printContent}</div>
+                <script>
+                  window.onload = function() {
+                    setTimeout(function() {
+                      window.focus();
+                      window.print();
+                      setTimeout(function() { window.close(); }, 1000);
+                    }, 500);
+                  };
+                </script>
+              </body>
+            </html>
+          `);
+          printWindow.document.close();
+        } else {
+          // Fallback if pop-up was blocked
+          window.print();
+        }
+      } else {
+        window.print();
+      }
 
       // 2. Change state of matched transactions in Firestore to printed = true (พิมพ์แล้ว)
       const batch = writeBatch(db);
@@ -442,7 +550,7 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
       }
       await batch.commit();
 
-      alert("ระบบพิมพ์เอกสารสำเร็จ และปรับปรุงสถานะธุรกรรมเป็น 'พิมพ์แล้ว' เรียบร้อย");
+      alert("ระบบส่งคำสั่งพิมพ์ไปยังเบราว์เซอร์แล้ว และปรับปรุงสถานะธุรกรรมเป็น 'พิมพ์แล้ว' เรียบร้อย");
       setSelectedTxIds([]); // Clear selection!
       setSlipPreviewOpen(false);
     } catch (err) {
@@ -547,10 +655,25 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
               }}
               className="w-full p-2 bg-white border border-gray-200 rounded-lg font-semibold focus:ring-2 focus:ring-red-500/20 focus:border-red-500 focus:outline-none"
             >
-              <option value="ส่งสโตร์ FG">ส่งสโตร์ FG</option>
-              <option value="เบิกงาน Rework">เบิกงาน Rework</option>
-              <option value="เบิกงานจาก TN">เบิกงานจาก TN</option>
-              <option value="all">แสดงประเภทโอนออกทั้งหมด</option>
+              <option value="all">แสดงทั้งหมด (ทั้งรับเข้า & โอนออก)</option>
+              <option value="all_in">เฉพาะรับเข้าทั้งหมด (All In)</option>
+              <option value="all_out">เฉพาะโอนออกทั้งหมด (All Out)</option>
+              
+              {allUniqueInSubTypes.length > 0 && (
+                <optgroup label="ประเภทการรับเข้า (Stock In)">
+                  {allUniqueInSubTypes.map((sub, i) => (
+                    <option key={`in-${i}`} value={sub}>{sub}</option>
+                  ))}
+                </optgroup>
+              )}
+              
+              {allUniqueOutSubTypes.length > 0 && (
+                <optgroup label="ประเภทการโอนออก (Stock Out)">
+                  {allUniqueOutSubTypes.map((sub, i) => (
+                    <option key={`out-${i}`} value={sub}>{sub}</option>
+                  ))}
+                </optgroup>
+              )}
             </select>
           </div>
           <div>
@@ -896,11 +1019,11 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
                 <div>
                   <h1 className="text-lg font-bold text-gray-900 tracking-tight">WSM-DUNAN CO., LTD.</h1>
                   <p className="text-gray-500 mt-1">คลังจัดส่งและระบบโอนย้ายสินค้า</p>
-                  <p className="text-gray-500">ใบโอนสินค้าภายใน / ใบจัดเตรียมส่งมอบ</p>
+                  <p className="text-gray-500">ใบโอนสินค้าภายใน / ใบจัดเตรียมรับเข้า-ส่งมอบ</p>
                 </div>
                 <div className="text-right">
                   <span className="bg-black text-white text-[10px] px-2.5 py-1 rounded font-bold uppercase tracking-wider block mb-2">
-                    {printType === "all" ? "โอนออกทั้งหมด" : printType}
+                    {printType === "all" ? "ทั้งหมด" : printType === "all_in" ? "รับเข้าทั้งหมด" : printType === "all_out" ? "โอนออกทั้งหมด" : printType}
                   </span>
                   <p className="text-gray-500">วันที่พิมพ์: {new Date().toLocaleDateString("th-TH")}</p>
                   <p className="text-gray-500">เวลากำหนด: {new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} น.</p>
@@ -910,7 +1033,7 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
               {/* Meta details */}
               <div className="grid grid-cols-2 gap-4 text-xs bg-gray-50 p-4 border rounded-xl">
                 <div>
-                  <p className="text-gray-400">ผู้ส่งมอบสินค้า:</p>
+                  <p className="text-gray-400">ผู้ส่งมอบ/รับเข้าสินค้า:</p>
                   <p className="font-bold text-gray-800 mt-0.5">
                     {printOperator === "all" ? "พนักงานแผนกโอนย้ายรวม" : employees.find((e) => e.id === printOperator)?.name || "System Operator"}
                   </p>
@@ -925,7 +1048,7 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
 
               {/* Transactions list */}
               <div className="space-y-2 text-xs">
-                <p className="font-bold text-gray-800">รายการสินค้า (พาร์ท) ที่ส่งมอบโอนย้าย:</p>
+                <p className="font-bold text-gray-800">รายการสินค้า (พาร์ท) ที่ทำการจัดโอนย้าย:</p>
                 <table className="w-full text-left border">
                   <thead>
                     <tr className="bg-gray-100 border-b">
@@ -949,7 +1072,7 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
                       </tr>
                     ))}
                     <tr className="bg-gray-50/50 font-bold">
-                      <td colSpan={4} className="p-2 border-r text-right uppercase">ยอดรวมส่งโอนย้ายทั้งสิ้น:</td>
+                      <td colSpan={4} className="p-2 border-r text-right uppercase">ยอดรวมรายการจัดโอนทั้งสิ้น:</td>
                       <td className="p-2 text-right text-sm underline underline-offset-4">
                         {selectedTransactions.reduce((acc, t) => acc + t.qty, 0).toLocaleString()} ชิ้น
                       </td>
