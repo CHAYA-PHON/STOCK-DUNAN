@@ -10,9 +10,10 @@ import { BOX_SIZE_OPTIONS, getRecommendedBoxSizes, getCustomerGroup, DEFAULT_BOI
 
 interface StockOutViewProps {
   currentUser: Employee | null;
+  onAddToSyncQueue?: (type: "in" | "out", items: any[]) => void;
 }
 
-export default function StockOutView({ currentUser }: StockOutViewProps) {
+export default function StockOutView({ currentUser, onAddToSyncQueue }: StockOutViewProps) {
   // DB States
   const [products, setProducts] = useState<Product[]>([]);
   const [locations, setLocations] = useState<LocationItem[]>([]);
@@ -414,41 +415,13 @@ export default function StockOutView({ currentUser }: StockOutViewProps) {
     }
     if (queue.length === 0) return;
 
-    try {
-      const batch = writeBatch(db);
-
-      for (const item of queue) {
-        // 1. Log transaction
-        const logRef = doc(collection(db, "inventory_log"));
-        batch.set(logRef, {
-          ...item,
-          timestamp: new Date(),
-        });
-
-        // 2. Decrement product stock master
-        const prodId = getSafeProductId(item.customer, item.partNo);
-        const prodRef = doc(db, "products", prodId);
-        const prodSnap = await getDoc(prodRef);
-
-        if (prodSnap.exists()) {
-          const prodData = prodSnap.data() as Product;
-          const currentShipped = prodData.shippedTotal || 0;
-          const currentStock = prodData.stock || 0;
-
-          batch.update(prodRef, {
-            shippedTotal: currentShipped + item.qty,
-            stock: currentStock - item.qty,
-          });
-        }
-      }
-
-      await batch.commit();
-      alert(`บันทึกโอนออก / เบิกสินค้าสำเร็จจำนวน ${queue.length} รายการเรียบร้อยแล้ว`);
-      setQueue([]);
-    } catch (err) {
-      console.error("Batch write out error:", err);
-      alert("เกิดข้อผิดพลาดในการบันทึกตัดสต๊อก");
+    if (onAddToSyncQueue) {
+      onAddToSyncQueue("out", queue);
+      alert(`📥 บันทึกรายการลงคิวจำลองชั่วคราวแล้ว ${queue.length} รายการสำเร็จ!\nระบบจะทำการโหลดข้อมูลออกจากคลังแบบเบื้องหลังอัตโนมัติ คุณสามารถทำงานต่อได้ทันที`);
+    } else {
+      alert("เกิดข้อผิดพลาด: ระบบคิวจำลองไม่พร้อมใช้งาน");
     }
+    setQueue([]);
   };
 
   return (

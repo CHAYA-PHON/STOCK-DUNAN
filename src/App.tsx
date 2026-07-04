@@ -3,6 +3,7 @@ import { collection, onSnapshot, doc, getDoc, setDoc, updateDoc } from "firebase
 import { db } from "./firebase";
 import { Employee, NotificationItem } from "./types";
 import { seedDatabaseIfEmpty } from "./utils/seed";
+import { getSyncQueue, saveSyncQueue, addToSyncQueue, syncSingleItem, SyncItem } from "./utils/syncQueue";
 import {
   DashboardView,
   StockInView,
@@ -34,6 +35,9 @@ import {
   Monitor,
   Bell,
   X as XIcon,
+  RefreshCw,
+  ChevronDown,
+  Trash2,
 } from "lucide-react";
 
 export default function App() {
@@ -72,6 +76,86 @@ export default function App() {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [showNotifications, setShowNotifications] = useState<boolean>(false);
   const [toasts, setToasts] = useState<NotificationItem[]>([]);
+
+  // Local Sync Queue States
+  const [syncQueue, setSyncQueue] = useState<SyncItem[]>(() => getSyncQueue());
+  const [showSyncDropdown, setShowSyncDropdown] = useState<boolean>(false);
+  const [isSyncingAll, setIsSyncingAll] = useState<boolean>(false);
+
+  // Sync adding callback passed to StockIn/StockOut
+  const handleAddToSyncQueue = (type: "in" | "out", items: any[]) => {
+    const updated = addToSyncQueue(type, items);
+    setSyncQueue(updated);
+  };
+
+  const triggerSync = async () => {
+    if (isSyncingAll) return;
+    const currentQueue = getSyncQueue();
+    const pendingItems = currentQueue.filter((item) => item.status === "pending" || item.status === "failed");
+    if (pendingItems.length === 0) return;
+
+    setIsSyncingAll(true);
+
+    // Update state to syncing
+    const updatedQueue = currentQueue.map((item) => {
+      if (item.status === "pending" || item.status === "failed") {
+        return { ...item, status: "syncing" as const };
+      }
+      return item;
+    });
+    setSyncQueue(updatedQueue);
+    saveSyncQueue(updatedQueue);
+
+    let successCount = 0;
+    let failCount = 0;
+    let finalQueue = [...updatedQueue];
+
+    for (const item of pendingItems) {
+      const res = await syncSingleItem(item);
+      const queueNow = getSyncQueue();
+      if (res.success) {
+        successCount++;
+        finalQueue = queueNow.filter((i) => i.id !== item.id);
+        setSyncQueue(finalQueue);
+        saveSyncQueue(finalQueue);
+      } else {
+        failCount++;
+        finalQueue = queueNow.map((i) => {
+          if (i.id === item.id) {
+            return { ...i, status: "failed" as const, errorMessage: res.error };
+          }
+          return i;
+        });
+        setSyncQueue(finalQueue);
+        saveSyncQueue(finalQueue);
+      }
+    }
+
+    setIsSyncingAll(false);
+
+    if (successCount > 0) {
+      const newToast: NotificationItem = {
+        id: `toast_${Date.now()}`,
+        title: "ซิงค์ข้อมูลคิวสำเร็จ",
+        message: `อัปโหลดรายการจากระบบคิวจำลองชั่วคราวขึ้นเซิร์ฟเวอร์สำเร็จเรียบร้อยแล้ว จำนวน ${successCount} รายการ`,
+        timestamp: new Date(),
+        read: false,
+        type: "system",
+      };
+      setNotifications((prev) => [newToast, ...prev]);
+    }
+  };
+
+  // Auto-sync background scheduler
+  useEffect(() => {
+    const hasPending = syncQueue.some((item) => item.status === "pending");
+    if (hasPending && !isSyncingAll) {
+      const timeout = setTimeout(() => {
+        triggerSync();
+      }, 3000);
+      return () => clearTimeout(timeout);
+    }
+  }, [syncQueue, isSyncingAll]);
 
   // Login inputs
   const [loginId, setLoginId] = useState("");
@@ -761,6 +845,76 @@ export default function App() {
           <span className="font-bold text-sm tracking-tight text-white">WSM-DUNAN</span>
         </div>
         <div className="flex items-center gap-2.5">
+          {/* Mobile Local Sync Queue Widget */}
+          <div className="relative inline-flex items-center bg-[#1e1e1e] border border-white/10 rounded-lg text-white">
+            <button
+              onClick={triggerSync}
+              className="relative p-1.5 hover:bg-white/5 rounded-l-lg flex items-center justify-center transition border-r border-white/10 cursor-pointer"
+              title="ซิงค์ข้อมูลกับฐานข้อมูล Cloud ทันที"
+              disabled={isSyncingAll}
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncingAll ? "animate-spin text-amber-500" : "text-white"}`} />
+              {syncQueue.length > 0 && (
+                <span className="absolute -top-1.5 -left-1.5 min-w-[16px] h-4 px-1 bg-amber-500 text-[8px] font-black text-white rounded-full flex items-center justify-center border border-[#111] animate-pulse">
+                  {syncQueue.length}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => setShowSyncDropdown(!showSyncDropdown)}
+              className="p-1 hover:bg-white/5 rounded-r-lg flex items-center justify-center transition cursor-pointer"
+              title="ดูรายการคิวรอโหลดข้อมูล"
+            >
+              <ChevronDown className="w-3 h-3 text-slate-400" />
+            </button>
+
+            {/* Mobile Dropdown */}
+            {showSyncDropdown && (
+              <div className="absolute top-10 right-0 w-64 bg-white rounded-xl shadow-2xl border border-gray-200 z-50 text-slate-800 p-3 animate-fade-in text-xs font-sans">
+                <div className="flex justify-between items-center pb-2 border-b border-gray-100 mb-2">
+                  <h3 className="font-bold text-gray-700">รายการรออัปโหลด ({syncQueue.length})</h3>
+                  {syncQueue.length > 0 && (
+                    <button
+                      onClick={triggerSync}
+                      disabled={isSyncingAll}
+                      className="bg-red-600 hover:bg-red-700 text-white font-bold py-0.5 px-1.5 rounded text-[9px] disabled:opacity-50 cursor-pointer"
+                    >
+                      {isSyncingAll ? "ซิงค์..." : "ซิงค์ทันที"}
+                    </button>
+                  )}
+                </div>
+
+                {syncQueue.length === 0 ? (
+                  <div className="py-3 text-center text-gray-400 font-medium">
+                    ไม่มีรายการค้างในคิว
+                  </div>
+                ) : (
+                  <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
+                    {syncQueue.map((item) => (
+                      <div key={item.id} className="p-1.5 rounded bg-gray-50 border border-gray-150 flex flex-col gap-1">
+                        <div className="flex justify-between items-start">
+                          <span className={`px-1 text-[8px] font-extrabold uppercase rounded ${
+                            item.type === "in" ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"
+                          }`}>
+                            {item.type === "in" ? "รับเข้า" : "โอนออก"}
+                          </span>
+                          <span className="font-mono text-gray-400 text-[8px]">{new Date(item.timestamp).toLocaleTimeString()}</span>
+                        </div>
+                        <div className="font-bold text-gray-800 text-[9px] truncate">
+                          {item.partNo}
+                        </div>
+                        <div className="text-[8px] text-gray-500 flex justify-between items-center">
+                          <span>จำนวน: <strong>{item.qty} Pcs</strong></span>
+                          <span className="truncate max-w-[80px]">Label: <strong>{item.labelId || "-"}</strong></span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* Mobile Bell Button */}
           <button
             onClick={() => setShowNotifications(true)}
@@ -801,19 +955,129 @@ export default function App() {
               <h1 className="text-white font-bold text-lg tracking-tight">WSM-DUNAN</h1>
             </div>
 
-            {/* Desktop Bell Notification */}
-            <button
-              onClick={() => setShowNotifications(true)}
-              className="relative p-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-xl transition cursor-pointer"
-              title="การแจ้งเตือน"
-            >
-              <Bell className="w-4.5 h-4.5" />
-              {notifications.filter((n) => !n.read).length > 0 && (
-                <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 text-[9px] font-bold text-white rounded-full flex items-center justify-center animate-pulse">
-                  {notifications.filter((n) => !n.read).length}
-                </span>
-              )}
-            </button>
+            <div className="flex items-center gap-1.5 relative">
+              {/* Local Sync Queue Widget */}
+              <div className="relative inline-flex items-center bg-[#1e1e1e] border border-white/10 rounded-lg text-white">
+                <button
+                  onClick={triggerSync}
+                  className="relative p-1.5 hover:bg-white/5 rounded-l-lg flex items-center justify-center transition border-r border-white/10 cursor-pointer"
+                  title="ซิงค์ข้อมูลกับฐานข้อมูล Cloud ทันที"
+                  disabled={isSyncingAll}
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncingAll ? "animate-spin text-amber-500" : "text-white"}`} />
+                  {syncQueue.length > 0 && (
+                    <span className="absolute -top-1.5 -left-1.5 min-w-[18px] h-4.5 px-1 bg-amber-500 text-[9px] font-black text-white rounded-full flex items-center justify-center border border-[#111] animate-pulse">
+                      {syncQueue.length}
+                    </span>
+                  )}
+                </button>
+                <button
+                  onClick={() => setShowSyncDropdown(!showSyncDropdown)}
+                  className="p-1 hover:bg-white/5 rounded-r-lg flex items-center justify-center transition cursor-pointer"
+                  title="ดูรายการคิวรอโหลดข้อมูล"
+                >
+                  <ChevronDown className="w-3 h-3 text-slate-400" />
+                </button>
+
+                {/* Desktop Sync Queue Dropdown */}
+                {showSyncDropdown && (
+                  <div className="absolute top-10 right-0 w-72 bg-white rounded-xl shadow-2xl border border-gray-200 z-50 text-slate-800 p-3.5 animate-fade-in text-xs font-sans">
+                    <div className="flex justify-between items-center pb-2 border-b border-gray-100 mb-2">
+                      <h3 className="font-bold text-gray-700">รายการรออัปโหลด ({syncQueue.length})</h3>
+                      {syncQueue.length > 0 && (
+                        <button
+                          onClick={triggerSync}
+                          disabled={isSyncingAll}
+                          className="bg-red-600 hover:bg-red-700 text-white font-bold py-1 px-2 rounded text-[10px] disabled:opacity-50 cursor-pointer"
+                        >
+                          {isSyncingAll ? "กำลังซิงค์..." : "ซิงค์ทันที"}
+                        </button>
+                      )}
+                    </div>
+
+                    {syncQueue.length === 0 ? (
+                      <div className="py-4 text-center text-gray-400 font-medium">
+                        ไม่มีรายการค้างในระบบคิว
+                      </div>
+                    ) : (
+                      <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
+                        {syncQueue.map((item) => (
+                          <div key={item.id} className="p-2 rounded bg-gray-50 border border-gray-150 flex flex-col gap-1">
+                            <div className="flex justify-between items-start">
+                              <span className={`px-1 text-[8px] font-extrabold uppercase rounded ${
+                                item.type === "in" ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"
+                              }`}>
+                                {item.type === "in" ? "รับเข้า" : "โอนออก"}
+                              </span>
+                              <span className="font-mono text-gray-400 text-[9px]">{new Date(item.timestamp).toLocaleTimeString()}</span>
+                            </div>
+                            <div className="font-bold text-gray-800 text-[10px] truncate">
+                              {item.partNo} / {item.customer}
+                            </div>
+                            <div className="text-[9px] text-gray-500 flex justify-between items-center">
+                              <span>จำนวน: <strong className="text-gray-700">{item.qty} Pcs</strong></span>
+                              <span>Label: <strong className="text-gray-700 font-mono">{item.labelId || "-"}</strong></span>
+                            </div>
+
+                            <div className="flex justify-between items-center mt-1 pt-1.5 border-t border-gray-100 text-[9px]">
+                              <div className="flex items-center gap-1">
+                                {item.status === "syncing" && (
+                                  <span className="text-amber-600 font-bold animate-pulse">กำลังโหลด...</span>
+                                )}
+                                {item.status === "failed" && (
+                                  <span className="text-red-600 font-bold max-w-[120px] truncate" title={item.errorMessage}>⚠️ ซ้ำ/ข้อผิดพลาด</span>
+                                )}
+                                {item.status === "pending" && (
+                                  <span className="text-gray-400">⏳ รอดำเนินการ</span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                {item.status === "failed" && (
+                                  <button
+                                    onClick={() => {
+                                      const updated = syncQueue.map(i => i.id === item.id ? { ...i, status: "pending" as const } : i);
+                                      setSyncQueue(updated);
+                                      saveSyncQueue(updated);
+                                    }}
+                                    className="text-blue-600 hover:text-blue-800 font-bold cursor-pointer"
+                                  >
+                                    ลองใหม่
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => {
+                                    const updated = syncQueue.filter(i => i.id !== item.id);
+                                    setSyncQueue(updated);
+                                    saveSyncQueue(updated);
+                                  }}
+                                  className="text-gray-400 hover:text-red-600 cursor-pointer"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Desktop Bell Notification */}
+              <button
+                onClick={() => setShowNotifications(true)}
+                className="relative p-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-xl transition cursor-pointer"
+                title="การแจ้งเตือน"
+              >
+                <Bell className="w-4.5 h-4.5" />
+                {notifications.filter((n) => !n.read).length > 0 && (
+                  <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 text-[9px] font-bold text-white rounded-full flex items-center justify-center animate-pulse">
+                    {notifications.filter((n) => !n.read).length}
+                  </span>
+                )}
+              </button>
+            </div>
           </div>
 
           <div className="space-y-1.5">
@@ -999,8 +1263,12 @@ export default function App() {
 
         <div className="flex-1">
           {activeTab === "dashboard" && <DashboardView />}
-          {activeTab === "stock_in" && <StockInView currentUser={currentUser} />}
-          {activeTab === "stock_out" && <StockOutView currentUser={currentUser} />}
+          {activeTab === "stock_in" && (
+            <StockInView currentUser={currentUser} onAddToSyncQueue={handleAddToSyncQueue} />
+          )}
+          {activeTab === "stock_out" && (
+            <StockOutView currentUser={currentUser} onAddToSyncQueue={handleAddToSyncQueue} />
+          )}
           {activeTab === "products_master" && <ProductsView />}
           {activeTab === "employees_permissions" && <EmployeesView currentUser={currentUser} />}
           {activeTab === "stock_adjust" && <AdjustView currentUser={currentUser} />}

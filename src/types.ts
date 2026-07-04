@@ -49,6 +49,26 @@ export interface InventoryTransaction {
   printed?: boolean; // "Printed" status for transfer documents
 }
 
+export interface InventoryDeleteRequest {
+  id: string;
+  txIds: string[]; // List of transaction IDs to delete
+  txDetails: {
+    id: string;
+    partNo: string;
+    partName: string;
+    customer: string;
+    qty: number;
+    type: "in" | "out" | "adj_in" | "adj_out";
+    timestamp: any;
+  }[];
+  requesterId: string;
+  requesterName: string;
+  timestamp: any;
+  status: "pending" | "approved" | "rejected";
+  approvedBy?: string;
+  approvedTimestamp?: any;
+}
+
 export interface AdjustRequest {
   id: string;
   partNo: string;

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { collection, onSnapshot, query, where, getDocs, doc, writeBatch, updateDoc, deleteDoc } from "firebase/firestore";
 import { db } from "../firebase";
-import { InventoryTransaction, Employee, Product, DeliveryFlow } from "../types";
+import { InventoryTransaction, Employee, Product, DeliveryFlow, InventoryDeleteRequest } from "../types";
 import * as XLSX from "xlsx";
 import { FileText, Download, Printer, Filter, Calendar, Users, Eye, CheckCircle, Trash2, Edit, X, Check } from "lucide-react";
 
@@ -35,6 +35,16 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
   const [printStatus, setPrintStatus] = useState<"all" | "unprinted" | "printed">("all");
   const [printShift, setPrintShift] = useState<string>("all");
   const [selectedTxIds, setSelectedTxIds] = useState<string[]>([]);
+  const [selectedMonthlyTxIds, setSelectedMonthlyTxIds] = useState<string[]>([]);
+  const [deleteRequests, setDeleteRequests] = useState<InventoryDeleteRequest[]>([]);
+  const [showRequestsTab, setShowRequestsTab] = useState<boolean>(false);
+
+  // PIN & Request states
+  const [pinModalOpen, setPinModalOpen] = useState<boolean>(false);
+  const [enteredPin, setEnteredPin] = useState<string>("");
+  const [pinAction, setPinAction] = useState<"direct_delete" | "approve_request" | "direct_delete_single" | null>(null);
+  const [targetSingleTxId, setTargetSingleTxId] = useState<string | null>(null);
+  const [targetRequestToApprove, setTargetRequestToApprove] = useState<InventoryDeleteRequest | null>(null);
 
   // Editing & Deleting states for Monthly Stock Log transactions
   const [editingTx, setEditingTx] = useState<InventoryTransaction | null>(null);
@@ -85,11 +95,28 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
       setDeliveryFlows(list);
     });
 
+    // 5. Fetch delete requests
+    const unsubDeleteReqs = onSnapshot(collection(db, "inventory_delete_requests"), (snap) => {
+      const list: InventoryDeleteRequest[] = [];
+      snap.forEach((d) => {
+        const data = d.data();
+        list.push({
+          id: d.id,
+          ...data,
+          timestamp: data.timestamp?.toDate ? data.timestamp.toDate() : new Date(data.timestamp),
+          approvedTimestamp: data.approvedTimestamp?.toDate ? data.approvedTimestamp.toDate() : data.approvedTimestamp ? new Date(data.approvedTimestamp) : undefined,
+        } as InventoryDeleteRequest);
+      });
+      list.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+      setDeleteRequests(list);
+    });
+
     return () => {
       unsubTxs();
       unsubEmps();
       unsubProds();
       unsubFlows();
+      unsubDeleteReqs();
     };
   }, []);
 
@@ -294,6 +321,265 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
       console.error(err);
       alert("เกิดข้อผิดพลาดในการลบ: " + err.message);
     }
+  };
+
+  const handleBatchDeleteTxs = async (txIds: string[]) => {
+    try {
+      const batch = writeBatch(db);
+      let successCount = 0;
+      let failureCount = 0;
+      let reason = "";
+
+      for (const txId of txIds) {
+        const tx = transactions.find((t) => t.id === txId);
+        if (!tx) continue;
+
+        const pMatch = products.find(
+          (p) =>
+            p.partNo.trim().toLowerCase() === tx.partNo.trim().toLowerCase() &&
+            p.customer.trim().toLowerCase() === tx.customer.trim().toLowerCase()
+        );
+
+        if (pMatch) {
+          const currentProdStock = pMatch.stock || 0;
+          let finalStock = currentProdStock;
+          if (tx.type === "in" || tx.type === "adj_in") {
+            finalStock = currentProdStock - tx.qty;
+          } else if (tx.type === "out" || tx.type === "adj_out") {
+            finalStock = currentProdStock + tx.qty;
+          }
+
+          if (finalStock < 0) {
+            failureCount++;
+            reason = `สต๊อกสินค้า ${tx.partNo} จะติดลบ (คงเหลือปัจจุบัน: ${currentProdStock} ชิ้น)`;
+            continue;
+          }
+
+          batch.delete(doc(db, "inventory_log", tx.id));
+          batch.update(doc(db, "products", pMatch.id), { stock: finalStock });
+          successCount++;
+        } else {
+          batch.delete(doc(db, "inventory_log", tx.id));
+          successCount++;
+        }
+      }
+
+      if (successCount > 0) {
+        await batch.commit();
+      }
+
+      if (failureCount > 0) {
+        alert(`ลบสำเร็จ ${successCount} รายการ, ล้มเหลว ${failureCount} รายการ\nสาเหตุที่ล้มเหลว: ${reason}`);
+      } else {
+        alert(`ลบรายการที่เลือกทั้งหมด ${successCount} รายการสำเร็จ และปรับยอดสต๊อกเรียบร้อยแล้ว`);
+      }
+      setSelectedMonthlyTxIds([]);
+    } catch (err: any) {
+      console.error(err);
+      alert("เกิดข้อผิดพลาดในการลบรายการแบบกลุ่ม: " + err.message);
+    }
+  };
+
+  const handleSubmitDeleteRequest = async (txIds: string[]) => {
+    try {
+      const selectedTxs = transactions.filter((t) => txIds.includes(t.id));
+      if (selectedTxs.length === 0) return;
+
+      const batch = writeBatch(db);
+      const reqId = "DEL-" + Date.now();
+      const reqRef = doc(db, "inventory_delete_requests", reqId);
+
+      const requestPayload: InventoryDeleteRequest = {
+        id: reqId,
+        txIds: txIds,
+        txDetails: selectedTxs.map((t) => ({
+          id: t.id,
+          partNo: t.partNo,
+          partName: t.partName,
+          customer: t.customer,
+          qty: t.qty,
+          type: t.type,
+          timestamp: t.timestamp,
+        })),
+        requesterId: currentUser?.id || "N/A",
+        requesterName: currentUser?.name || "N/A",
+        timestamp: new Date(),
+        status: "pending",
+      };
+
+      batch.set(reqRef, requestPayload);
+
+      // Create a notification for supervisors/admin
+      const notifRef = doc(collection(db, "notifications"));
+      batch.set(notifRef, {
+        id: `notif_${Date.now()}`,
+        title: "มีคำขอลบรายการธุรกรรมใหม่",
+        message: `คุณ ${currentUser?.name} ส่งคำขอลบรายการจำนวน ${txIds.length} รายการ รอการอนุมัติด้วย PIN`,
+        timestamp: new Date(),
+        read: false,
+        type: "request",
+        linkTab: "reports",
+      });
+
+      await batch.commit();
+      alert(`ส่งคำขอลบรายการสำเร็จจำนวน ${txIds.length} รายการแล้ว! โปรดติดต่อหัวหน้างานหรือผู้ดูแลระบบเพื่อยืนยันอนุมัติด้วยรหัส PIN`);
+      setSelectedMonthlyTxIds([]);
+    } catch (err: any) {
+      console.error(err);
+      alert("เกิดข้อผิดพลาดในการส่งคำขอลบรายการ: " + err.message);
+    }
+  };
+
+  const handleApproveDeleteRequest = async (req: InventoryDeleteRequest) => {
+    try {
+      const batch = writeBatch(db);
+      let successCount = 0;
+      let failureCount = 0;
+      let reason = "";
+
+      for (const txDetail of req.txDetails) {
+        const txId = txDetail.id;
+        const txSnap = transactions.find((t) => t.id === txId);
+        if (!txSnap) {
+          continue; // Transaction already deleted or gone
+        }
+
+        const pMatch = products.find(
+          (p) =>
+            p.partNo.trim().toLowerCase() === txDetail.partNo.trim().toLowerCase() &&
+            p.customer.trim().toLowerCase() === txDetail.customer.trim().toLowerCase()
+        );
+
+        if (pMatch) {
+          const currentProdStock = pMatch.stock || 0;
+          let finalStock = currentProdStock;
+          if (txDetail.type === "in" || txDetail.type === "adj_in") {
+            finalStock = currentProdStock - txDetail.qty;
+          } else if (txDetail.type === "out" || txDetail.type === "adj_out") {
+            finalStock = currentProdStock + txDetail.qty;
+          }
+
+          if (finalStock < 0) {
+            failureCount++;
+            reason = `สต๊อกสินค้า ${txDetail.partNo} จะติดลบ (คงเหลือปัจจุบัน: ${currentProdStock} ชิ้น)`;
+            continue;
+          }
+
+          batch.delete(doc(db, "inventory_log", txId));
+          batch.update(doc(db, "products", pMatch.id), { stock: finalStock });
+          successCount++;
+        } else {
+          batch.delete(doc(db, "inventory_log", txId));
+          successCount++;
+        }
+      }
+
+      // Update request status
+      const reqRef = doc(db, "inventory_delete_requests", req.id);
+      batch.update(reqRef, {
+        status: "approved",
+        approvedBy: currentUser?.name || "N/A",
+        approvedTimestamp: new Date(),
+      });
+
+      // Create notification for requester
+      const notifRef = doc(collection(db, "notifications"));
+      batch.set(notifRef, {
+        id: `notif_${Date.now()}`,
+        title: "คำขอลบรายการได้รับการอนุมัติ",
+        message: `คำขอลบรายการจำนวน ${req.txDetails.length} รายการของคุณได้รับการอนุมัติโดย ${currentUser?.name} เรียบร้อยแล้ว`,
+        timestamp: new Date(),
+        read: false,
+        type: "approval",
+      });
+
+      if (successCount > 0 || failureCount === 0) {
+        await batch.commit();
+      }
+
+      if (failureCount > 0) {
+        alert(`อนุมัติและลบสำเร็จ ${successCount} รายการ, ล้มเหลว ${failureCount} รายการ\nสาเหตุ: ${reason}`);
+      } else {
+        alert("อนุมัติคำขอลบและปรับปรุงยอดสต๊อกเรียบร้อยแล้ว");
+      }
+    } catch (err: any) {
+      console.error(err);
+      alert("เกิดข้อผิดพลาดในการอนุมัติคำขอ: " + err.message);
+    }
+  };
+
+  const handleRejectDeleteRequest = async (req: InventoryDeleteRequest) => {
+    try {
+      const reqRef = doc(db, "inventory_delete_requests", req.id);
+      await updateDoc(reqRef, {
+        status: "rejected",
+        approvedBy: currentUser?.name || "N/A",
+        approvedTimestamp: new Date(),
+      });
+
+      // Notify the requester
+      const notifRef = doc(collection(db, "notifications"));
+      const batch = writeBatch(db);
+      batch.set(notifRef, {
+        id: `notif_${Date.now()}`,
+        title: "คำขอลบรายการถูกปฏิเสธ",
+        message: `คำขอลบรายการจำนวน ${req.txDetails.length} รายการของคุณถูกปฏิเสธโดยคุณ ${currentUser?.name}`,
+        timestamp: new Date(),
+        read: false,
+        type: "approval",
+      });
+      await batch.commit();
+
+      alert("ปฏิเสธคำขอลบรายการเรียบร้อยแล้ว");
+    } catch (err: any) {
+      console.error(err);
+      alert("เกิดข้อผิดพลาดในการปฏิเสธคำขอ: " + err.message);
+    }
+  };
+
+  const handleTriggerDelete = (txIds: string[]) => {
+    if (txIds.length === 0) return;
+
+    const isAdminOrLeader = currentUser?.role === "admin" || currentUser?.role === "leader";
+
+    if (isAdminOrLeader) {
+      // Admin/Leader: open PIN modal for direct deletion
+      setPinAction("direct_delete");
+      setSelectedMonthlyTxIds(txIds); // save target IDs
+      setPinModalOpen(true);
+    } else {
+      // Standard worker: confirm sending delete request
+      const confirmMsg = txIds.length === 1 
+        ? "คุณต้องการส่งคำขอลบรายการนี้ใช่หรือไม่?" 
+        : `คุณต้องการส่งคำขอลบรายการที่เลือกทั้งหมด ${txIds.length} รายการใช่หรือไม่?`;
+      if (window.confirm(confirmMsg)) {
+        handleSubmitDeleteRequest(txIds);
+      }
+    }
+  };
+
+  const handleVerifyPINAndExecute = async () => {
+    if (!enteredPin) {
+      alert("กรุณากรอกรหัส PIN");
+      return;
+    }
+
+    if (enteredPin !== currentUser?.pin) {
+      alert("รหัส PIN ไม่ถูกต้อง ไม่สามารถดำเนินการได้");
+      return;
+    }
+
+    // Reset entered pin
+    setEnteredPin("");
+    setPinModalOpen(false);
+
+    if (pinAction === "direct_delete" && selectedMonthlyTxIds.length > 0) {
+      await handleBatchDeleteTxs(selectedMonthlyTxIds);
+    } else if (pinAction === "approve_request" && targetRequestToApprove) {
+      await handleApproveDeleteRequest(targetRequestToApprove);
+      setTargetRequestToApprove(null);
+    }
+    setPinAction(null);
   };
 
   // Excel download logic
@@ -1214,98 +1500,270 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
           </div>
         </div>
 
-        {/* List transactions with Edit / Delete actions */}
-        <div className="overflow-x-auto border border-gray-100 rounded-2xl max-h-[450px] overflow-y-auto text-xs">
-          <table className="w-full text-left">
-            <thead className="bg-gray-50 text-gray-500 font-bold border-b sticky top-0 z-10">
-              <tr>
-                <th className="p-3">วันเวลา</th>
-                <th className="p-3">ประเภท</th>
-                <th className="p-3">พาร์ทสินค้า / รายการ</th>
-                <th className="p-3 text-right">จำนวน</th>
-                <th className="p-3">พิกัด / กะ</th>
-                <th className="p-3 text-center">การจัดการ</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredTxs.length === 0 ? (
+        {/* TAB NAVIGATION FOR TRANSACTION LOG vs DELETE REQUESTS */}
+        <div className="flex border-b border-gray-100 gap-1 mt-2">
+          <button
+            onClick={() => setShowRequestsTab(false)}
+            className={`px-4 py-2 text-xs font-bold transition-all relative ${
+              !showRequestsTab
+                ? "text-red-600 border-b-2 border-red-600"
+                : "text-gray-400 hover:text-gray-600"
+            }`}
+          >
+            ประวัติธุรกรรมประจำเดือน ({filteredTxs.length})
+          </button>
+          <button
+            onClick={() => setShowRequestsTab(true)}
+            className={`px-4 py-2 text-xs font-bold transition-all relative flex items-center gap-1.5 ${
+              showRequestsTab
+                ? "text-red-600 border-b-2 border-red-600"
+                : "text-gray-400 hover:text-gray-600"
+            }`}
+          >
+            คำขอลบรายการ
+            {deleteRequests.filter((r) => r.status === "pending").length > 0 && (
+              <span className="bg-red-500 text-white text-[9px] px-1.5 py-0.5 rounded-full font-bold">
+                {deleteRequests.filter((r) => r.status === "pending").length}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {showRequestsTab ? (
+          /* TAB 2: DELETE REQUESTS LIST */
+          <div className="overflow-x-auto border border-gray-100 rounded-2xl max-h-[450px] overflow-y-auto text-xs">
+            <table className="w-full text-left">
+              <thead className="bg-gray-50 text-gray-500 font-bold border-b sticky top-0 z-10">
                 <tr>
-                  <td colSpan={6} className="p-12 text-center text-gray-400 italic bg-white">
-                    ไม่พบประวัติธุรกรรมในรอบเดือนที่เลือก
-                  </td>
+                  <th className="p-3">วันเวลาคำขอ</th>
+                  <th className="p-3">ผู้ส่งคำขอ</th>
+                  <th className="p-3">รายการธุรกรรมที่จะลบ</th>
+                  <th className="p-3 text-center">สถานะ</th>
+                  <th className="p-3 text-center">การจัดการ</th>
                 </tr>
-              ) : (
-                filteredTxs.map((t) => (
-                  <tr key={t.id} className="border-b hover:bg-gray-50/50 bg-white transition">
-                    <td className="p-3 text-gray-400 font-mono">
-                      {t.timestamp.toLocaleDateString("th-TH")}
-                      <div className="text-[10px]">{t.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
-                    </td>
-                    <td className="p-3">
-                      <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${
-                        t.type === "in"
-                          ? "bg-green-50 text-green-700" 
-                          : t.type === "adj_in"
-                          ? "bg-yellow-100 text-yellow-800 border border-yellow-200/60" 
-                          : t.type === "adj_out"
-                          ? "bg-orange-100 text-orange-800 border border-orange-200/60"
-                          : "bg-red-50 text-red-600"
-                      }`}>
-                        {t.type === "in" ? "รับเข้า" : t.type === "adj_in" ? "ปรับสต๊อกเข้า" : t.type === "adj_out" ? "ปรับสต๊อกออก" : "โอนออก"}
-                      </span>
-                      <div className="text-[9px] text-gray-400 mt-1">{t.subType}</div>
-                    </td>
-                    <td className="p-3">
-                      <span className="font-bold text-gray-800">{t.partNo}</span>
-                      <div className="text-[10px] text-gray-400 truncate max-w-[150px]">{t.partName}</div>
-                      <div className="text-[9px] text-gray-400">ผู้ทำ: {t.operatorName}</div>
-                    </td>
-                    <td className="p-3 text-right">
-                      <span className={`font-bold ${
-                        t.type === "in"
-                          ? "text-green-600"
-                          : t.type === "adj_in"
-                          ? "text-yellow-600 font-extrabold"
-                          : t.type === "adj_out"
-                          ? "text-orange-600 font-extrabold"
-                          : "text-red-500"
-                      }`}>
-                        {(t.type === "in" || t.type === "adj_in") ? "+" : "-"}
-                        {t.qty.toLocaleString()}
-                      </span>
-                    </td>
-                    <td className="p-3">
-                      <div className="font-bold text-gray-700">{t.location}</div>
-                      <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold ${
-                        t.shift === "NIGHT" ? "bg-indigo-50 text-indigo-700" : "bg-amber-50 text-amber-700"
-                      }`}>
-                        {t.shift}
-                      </span>
-                    </td>
-                    <td className="p-3 text-center">
-                      <div className="flex justify-center items-center gap-2">
-                        <button
-                          onClick={() => handleOpenEditTx(t)}
-                          className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition cursor-pointer"
-                          title="แก้ไขรายการ"
-                        >
-                          <Edit className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => setDeleteConfirmTxId(t.id)}
-                          className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition cursor-pointer"
-                          title="ลบรายการ"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
+              </thead>
+              <tbody>
+                {deleteRequests.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="p-12 text-center text-gray-400 italic bg-white">
+                      ไม่พบคำขอลบรายการธุรกรรมใดๆ
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+                ) : (
+                  deleteRequests.map((req) => (
+                    <tr key={req.id} className="border-b hover:bg-gray-50/50 bg-white transition align-top">
+                      <td className="p-3 text-gray-400 font-mono">
+                        {req.timestamp.toLocaleDateString("th-TH")}
+                        <div className="text-[10px]">{req.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
+                      </td>
+                      <td className="p-3">
+                        <div className="font-bold text-gray-800">{req.requesterName}</div>
+                        <div className="text-[10px] text-gray-400">ID: {req.requesterId}</div>
+                      </td>
+                      <td className="p-3">
+                        <div className="space-y-1 max-h-[100px] overflow-y-auto pr-2">
+                          {req.txDetails.map((item, idx) => (
+                            <div key={idx} className="flex justify-between gap-4 p-1.5 bg-gray-50 rounded border border-gray-100/50">
+                              <div>
+                                <span className="font-bold text-gray-700">{item.partNo}</span>
+                                <span className="text-[9px] text-gray-400 ml-1">({item.customer})</span>
+                              </div>
+                              <span className="font-mono text-red-600 font-bold">-{item.qty.toLocaleString()}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="p-3 text-center">
+                        <span className={`inline-block px-2.5 py-1 rounded-full text-[10px] font-bold ${
+                          req.status === "pending"
+                            ? "bg-yellow-50 text-yellow-700 border border-yellow-100"
+                            : req.status === "approved"
+                            ? "bg-green-50 text-green-700 border border-green-100"
+                            : "bg-red-50 text-red-700 border border-red-100"
+                        }`}>
+                          {req.status === "pending" ? "รออนุมัติ" : req.status === "approved" ? `อนุมัติแล้ว โดย ${req.approvedBy}` : `ปฏิเสธแล้ว โดย ${req.approvedBy}`}
+                        </span>
+                      </td>
+                      <td className="p-3 text-center">
+                        {req.status === "pending" ? (
+                          currentUser?.role === "admin" || currentUser?.role === "leader" ? (
+                            <div className="flex justify-center gap-1.5">
+                              <button
+                                onClick={() => {
+                                  setTargetRequestToApprove(req);
+                                  setPinAction("approve_request");
+                                  setPinModalOpen(true);
+                                }}
+                                className="bg-green-600 hover:bg-green-700 text-white text-[10px] font-bold px-2 py-1 rounded transition flex items-center gap-1 shadow-sm select-none"
+                              >
+                                <Check className="w-3 h-3" /> อนุมัติ
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (window.confirm("ยืนยันปฏิเสธคำขอลบรายการนี้?")) {
+                                    handleRejectDeleteRequest(req);
+                                  }
+                                }}
+                                className="bg-red-50 hover:bg-red-100 text-red-600 text-[10px] font-bold px-2 py-1 rounded transition border border-red-100 flex items-center gap-1 select-none"
+                              >
+                                <X className="w-3 h-3" /> ปฏิเสธ
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-gray-400 text-[10px] italic">เฉพาะหัวหน้างาน</span>
+                          )
+                        ) : (
+                          <span className="text-gray-400 text-[10px]">-</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          /* TAB 1: GENERAL TRANSACTION LOGS */
+          <div className="space-y-3">
+            {selectedMonthlyTxIds.length > 0 && (
+              <div className="flex items-center justify-between bg-red-50/50 p-3 rounded-xl border border-red-100/50">
+                <span className="text-xs font-bold text-red-700">
+                  เลือกธุรกรรมทั้งหมด {selectedMonthlyTxIds.length} รายการ
+                </span>
+                <button
+                  onClick={() => handleTriggerDelete(selectedMonthlyTxIds)}
+                  className="bg-red-600 hover:bg-red-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-1 transition shadow-sm select-none"
+                >
+                  <Trash2 className="w-3.5 h-3.5" /> ลบรายการที่เลือกทั้งหมด
+                </button>
+              </div>
+            )}
+
+            <div className="overflow-x-auto border border-gray-100 rounded-2xl max-h-[450px] overflow-y-auto text-xs">
+              <table className="w-full text-left">
+                <thead className="bg-gray-50 text-gray-500 font-bold border-b sticky top-0 z-10">
+                  <tr>
+                    <th className="p-3 w-10 text-center">
+                      <input
+                        type="checkbox"
+                        className="rounded text-red-600 focus:ring-red-500 w-4 h-4 cursor-pointer"
+                        checked={
+                          filteredTxs.length > 0 &&
+                          filteredTxs.every((t) => selectedMonthlyTxIds.includes(t.id))
+                        }
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedMonthlyTxIds(filteredTxs.map((t) => t.id));
+                          } else {
+                            setSelectedMonthlyTxIds([]);
+                          }
+                        }}
+                      />
+                    </th>
+                    <th className="p-3">วันเวลา</th>
+                    <th className="p-3">ประเภท</th>
+                    <th className="p-3">พาร์ทสินค้า / รายการ</th>
+                    <th className="p-3 text-right">จำนวน</th>
+                    <th className="p-3">พิกัด / กะ</th>
+                    <th className="p-3 text-center">การจัดการ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredTxs.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="p-12 text-center text-gray-400 italic bg-white">
+                        ไม่พบประวัติธุรกรรมในรอบเดือนที่เลือก
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredTxs.map((t) => (
+                      <tr key={t.id} className="border-b hover:bg-gray-50/50 bg-white transition">
+                        <td className="p-3 text-center">
+                          <input
+                            type="checkbox"
+                            className="rounded text-red-600 focus:ring-red-500 w-4 h-4 cursor-pointer"
+                            checked={selectedMonthlyTxIds.includes(t.id)}
+                            onChange={() => {
+                              if (selectedMonthlyTxIds.includes(t.id)) {
+                                setSelectedMonthlyTxIds(selectedMonthlyTxIds.filter((id) => id !== t.id));
+                              } else {
+                                setSelectedMonthlyTxIds([...selectedMonthlyTxIds, t.id]);
+                              }
+                            }}
+                          />
+                        </td>
+                        <td className="p-3 text-gray-400 font-mono">
+                          {t.timestamp.toLocaleDateString("th-TH")}
+                          <div className="text-[10px]">{t.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
+                        </td>
+                        <td className="p-3">
+                          <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${
+                            t.type === "in"
+                              ? "bg-green-50 text-green-700" 
+                              : t.type === "adj_in"
+                              ? "bg-yellow-100 text-yellow-800 border border-yellow-200/60" 
+                              : t.type === "adj_out"
+                              ? "bg-orange-100 text-orange-800 border border-orange-200/60"
+                              : "bg-red-50 text-red-600"
+                          }`}>
+                            {t.type === "in" ? "รับเข้า" : t.type === "adj_in" ? "ปรับสต๊อกเข้า" : t.type === "adj_out" ? "ปรับสต๊อกออก" : "โอนออก"}
+                          </span>
+                          <div className="text-[9px] text-gray-400 mt-1">{t.subType}</div>
+                        </td>
+                        <td className="p-3">
+                          <span className="font-bold text-gray-800">{t.partNo}</span>
+                          <div className="text-[10px] text-gray-400 truncate max-w-[150px]">{t.partName}</div>
+                          <div className="text-[9px] text-gray-400 font-semibold text-gray-500 mt-0.5">ลูกค้า: {t.customer} {t.subCustomer ? `(${t.subCustomer})` : ""}</div>
+                          <div className="text-[9px] text-gray-400 mt-0.5">ผู้ทำ: {t.operatorName}</div>
+                        </td>
+                        <td className="p-3 text-right">
+                          <span className={`font-bold ${
+                            t.type === "in"
+                              ? "text-green-600"
+                              : t.type === "adj_in"
+                              ? "text-yellow-600 font-extrabold"
+                              : t.type === "adj_out"
+                              ? "text-orange-600 font-extrabold"
+                              : "text-red-500"
+                          }`}>
+                            {(t.type === "in" || t.type === "adj_in") ? "+" : "-"}
+                            {t.qty.toLocaleString()}
+                          </span>
+                        </td>
+                        <td className="p-3">
+                          <div className="font-bold text-gray-700">{t.location}</div>
+                          <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold ${
+                            t.shift === "NIGHT" ? "bg-indigo-50 text-indigo-700" : "bg-amber-50 text-amber-700"
+                          }`}>
+                            {t.shift}
+                          </span>
+                        </td>
+                        <td className="p-3 text-center">
+                          <div className="flex justify-center items-center gap-2">
+                            <button
+                              onClick={() => handleOpenEditTx(t)}
+                              className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition cursor-pointer"
+                              title="แก้ไขรายการ"
+                            >
+                              <Edit className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleTriggerDelete([t.id])}
+                              className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition cursor-pointer"
+                              title="ลบรายการ"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* PRINT DIALOG SLIP OVERLAY PREVIEW */}
@@ -1586,34 +2044,50 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
         </div>
       )}
 
-      {/* DELETE TRANSACTION CONFIRMATION MODAL */}
-      {deleteConfirmTxId && (
-        <div className="fixed inset-0 z-[130] bg-black/60 flex items-center justify-center p-4">
+      {/* PIN VERIFICATION MODAL */}
+      {pinModalOpen && (
+        <div className="fixed inset-0 z-[200] bg-black/60 flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl border border-gray-100 p-6 space-y-4">
             <div className="text-center space-y-2">
               <div className="w-12 h-12 rounded-full bg-red-50 flex items-center justify-center text-red-600 mx-auto">
-                <Trash2 className="w-6 h-6" />
+                <Users className="w-6 h-6" />
               </div>
-              <h3 className="font-bold text-gray-900 text-sm">ยืนยันการลบรายการธุรกรรม?</h3>
+              <h3 className="font-bold text-gray-900 text-sm">กรอกรหัส PIN ของหัวหน้างาน/ผู้ดูแล</h3>
               <p className="text-xs text-gray-500">
-                การลบรายการจะคืนค่าสต๊อกสินค้าพาร์ทนี้ตามประเภทธุรกรรม (รับเข้าจะลบสต๊อก / โอนออกจะคืนสต๊อกกลับ)
+                {pinAction === "direct_delete"
+                  ? `กรุณากรอกรหัส PIN 6 หลักของคุณเพื่ออนุมัติการลบรายการจำนวน ${selectedMonthlyTxIds.length} รายการโดยตรง`
+                  : `กรุณากรอกรหัส PIN 6 หลักของคุณเพื่ออนุมัติคำขอลบรายการธุรกรรม`
+                }
               </p>
             </div>
+            
+            <div className="space-y-3">
+              <input
+                type="password"
+                maxLength={6}
+                value={enteredPin}
+                onChange={(e) => setEnteredPin(e.target.value.replace(/\D/g, ""))}
+                placeholder="• • • • • •"
+                className="w-full text-center text-2xl tracking-[0.5em] p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-500/20 focus:outline-none font-mono"
+              />
+            </div>
+
             <div className="flex justify-center gap-2 text-xs pt-2">
               <button
-                onClick={() => setDeleteConfirmTxId(null)}
+                onClick={() => {
+                  setPinModalOpen(false);
+                  setEnteredPin("");
+                  setPinAction(null);
+                }}
                 className="px-4 py-2 border rounded-xl hover:bg-gray-100 font-semibold cursor-pointer"
               >
                 ยกเลิก
               </button>
               <button
-                onClick={() => {
-                  const tx = transactions.find((t) => t.id === deleteConfirmTxId);
-                  if (tx) handleDeleteTx(tx);
-                }}
+                onClick={handleVerifyPINAndExecute}
                 className="px-5 py-2 bg-red-600 text-white rounded-xl hover:bg-red-700 font-bold cursor-pointer"
               >
-                ยืนยันลบรายการ
+                ยืนยันรหัส PIN
               </button>
             </div>
           </div>

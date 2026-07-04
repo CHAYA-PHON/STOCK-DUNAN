@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { collection, onSnapshot, doc, getDoc, writeBatch, setDoc, updateDoc, addDoc } from "firebase/firestore";
+import { collection, onSnapshot, doc, getDoc, getDocs, query, where, writeBatch, setDoc, updateDoc, addDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import { Product, Employee, InventoryTransaction, LocationItem } from "../types";
 import { fuzzySearch } from "../utils/fuzzy";
@@ -10,9 +10,10 @@ import { BOX_SIZE_OPTIONS, getRecommendedBoxSizes, getCustomerGroup, DEFAULT_BOI
 
 interface StockInViewProps {
   currentUser: Employee | null;
+  onAddToSyncQueue?: (type: "in" | "out", items: any[]) => void;
 }
 
-export default function StockInView({ currentUser }: StockInViewProps) {
+export default function StockInView({ currentUser, onAddToSyncQueue }: StockInViewProps) {
   // Database States
   const [products, setProducts] = useState<Product[]>([]);
   const [locations, setLocations] = useState<LocationItem[]>([]);
@@ -369,43 +370,13 @@ export default function StockInView({ currentUser }: StockInViewProps) {
     }
     if (queue.length === 0) return;
 
-    try {
-      const batch = writeBatch(db);
-
-      // Process each queue item
-      for (const item of queue) {
-        // 1. Add log entry (let firebase generate doc id)
-        const logRef = doc(collection(db, "inventory_log"));
-        batch.set(logRef, {
-          ...item,
-          timestamp: new Date(),
-        });
-
-        // 2. Fetch current Product Master and update statistics
-        // Firestore transactions/batches run asynchronously. We should fetch live states or use merge additions.
-        const prodId = getSafeProductId(item.customer, item.partNo);
-        const prodRef = doc(db, "products", prodId);
-        const prodSnap = await getDoc(prodRef);
-
-        if (prodSnap.exists()) {
-          const prodData = prodSnap.data() as Product;
-          const currentReceived = prodData.receivedTotal || 0;
-          const currentStock = prodData.stock || 0;
-
-          batch.update(prodRef, {
-            receivedTotal: currentReceived + item.qty,
-            stock: currentStock + item.qty,
-          });
-        }
-      }
-
-      await batch.commit();
-      alert(`บันทึกรับเข้าสินค้าสำเร็จจำนวน ${queue.length} รายการเรียบร้อยแล้ว`);
-      setQueue([]);
-    } catch (err) {
-      console.error("Batch save error:", err);
-      alert("เกิดข้อผิดพลาดในการบันทึกสต๊อกเข้าฐานข้อมูล");
+    if (onAddToSyncQueue) {
+      onAddToSyncQueue("in", queue);
+      alert(`📥 บันทึกรายการลงคิวจำลองชั่วคราวแล้ว ${queue.length} รายการสำเร็จ!\nระบบจะทำการโหลดข้อมูลเข้าคลังแบบเบื้องหลังอัตโนมัติ คุณสามารถทำงานต่อได้ทันที`);
+    } else {
+      alert("เกิดข้อผิดพลาด: ระบบคิวจำลองไม่พร้อมใช้งาน");
     }
+    setQueue([]);
   };
 
   return (

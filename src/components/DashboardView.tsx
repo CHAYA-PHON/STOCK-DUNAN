@@ -71,7 +71,7 @@ export default function DashboardView() {
   };
 
   // Metric summaries
-  const totalCurrentStock: number = products.reduce((acc: number, p: Product) => acc + (p.stock || 0), 0);
+  const totalCurrentStock: number = products.reduce((acc: number, p: Product) => acc + Math.max(0, p.stock || 0), 0);
 
   // Daily totals
   const { start: dayStart, end: dayEnd } = getDailyBoundaries();
@@ -146,7 +146,7 @@ export default function DashboardView() {
   // Group current products stock by customer
   const customerStocks = products.reduce((acc: { [key: string]: number }, p: Product) => {
     const cust = p.customer?.trim() || "ทั่วไป (General)";
-    acc[cust] = (acc[cust] || 0) + (p.stock || 0);
+    acc[cust] = (acc[cust] || 0) + Math.max(0, p.stock || 0);
     return acc;
   }, {});
 
