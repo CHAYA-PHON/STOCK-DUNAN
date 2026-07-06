@@ -31,7 +31,7 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
   const [printEndDate, setPrintEndDate] = useState(new Date().toISOString().split("T")[0]);
   const [printOperator, setPrintOperator] = useState("all");
   const [printCustomer, setPrintCustomer] = useState("all");
-  const [printType, setPrintType] = useState("all");
+  const [printType, setPrintType] = useState("all_out");
   const [printStatus, setPrintStatus] = useState<"all" | "unprinted" | "printed">("all");
   const [printShift, setPrintShift] = useState<string>("all");
   const [selectedTxIds, setSelectedTxIds] = useState<string[]>([]);
@@ -194,11 +194,13 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
 
     // 4. Transfer SubType filter
     if (printType === "all_in") {
-      if (t.type !== "in" && t.type !== "adj_in") return false;
+      if (t.type !== "in") return false;
     } else if (printType === "all_out") {
-      if (t.type !== "out" && t.type !== "adj_out") return false;
+      if (t.type !== "out") return false;
+    } else if (printType === "stock_adjust") {
+      if (t.type !== "adj_in" && t.type !== "adj_out") return false;
     } else if (printType !== "all" && t.subType !== printType) {
-      return false;
+      if (t.subType !== printType) return false;
     }
 
     // 5. Status filter
@@ -1184,9 +1186,9 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
               }}
               className="w-full p-2 bg-white border border-gray-200 rounded-lg font-semibold focus:ring-2 focus:ring-red-500/20 focus:border-red-500 focus:outline-none"
             >
-              <option value="all">แสดงทั้งหมด (ทั้งรับเข้า & โอนออก)</option>
-              <option value="all_in">เฉพาะรับเข้าทั้งหมด (All In)</option>
-              <option value="all_out">เฉพาะโอนออกทั้งหมด (All Out)</option>
+              <option value="all_out">โอนออก (Stock Out)</option>
+              <option value="all_in">รับเข้า (Stock In)</option>
+              <option value="stock_adjust">ปรับยอดสต๊อก เข้า/ออก (Stock Adjust)</option>
               
               {allUniqueInSubTypes.length > 0 && (
                 <optgroup label="ประเภทการรับเข้า (Stock In)">
@@ -1352,7 +1354,12 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
                         )}
                       </td>
                       <td className="p-3 font-mono font-semibold text-gray-900">{t.partNo}</td>
-                      <td className="p-3 text-right font-bold text-gray-800 text-sm">{t.qty.toLocaleString()}</td>
+                      <td className={`p-3 text-right font-bold text-sm ${
+                        t.type === "adj_out" ? "text-red-600" : t.type === "adj_in" ? "text-emerald-600" : "text-gray-800"
+                      }`}>
+                        {t.type === "adj_out" ? "-" : t.type === "adj_in" ? "+" : ""}
+                        {t.qty.toLocaleString()}
+                      </td>
                       <td className="p-3 text-gray-600">{t.operatorName}</td>
                       <td className="p-3">
                         {t.printed ? (
@@ -1888,7 +1895,17 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
                                   <td style={{ border: "2px solid black", padding: "6px", fontSize: "11px", textAlign: "center", fontWeight: "bold", color: "black" }}>{formattedIndex}</td>
                                   <td style={{ border: "2px solid black", padding: "6px", fontSize: "11px", textAlign: "left", color: "black" }}>{item.customer}</td>
                                   <td style={{ border: "2px solid black", padding: "6px", fontSize: "11px", textAlign: "left", fontWeight: "bold", color: "black" }}>{item.partNo}</td>
-                                  <td style={{ border: "2px solid black", padding: "6px", fontSize: "11px", textAlign: "right", fontWeight: "bold", color: "black" }}>{item.qty.toLocaleString()}</td>
+                                  <td style={{
+                                    border: "2px solid black",
+                                    padding: "6px",
+                                    fontSize: "11px",
+                                    textAlign: "right",
+                                    fontWeight: "bold",
+                                    color: item.type === "adj_out" ? "#dc2626" : item.type === "adj_in" ? "#16a34a" : "black"
+                                  }}>
+                                    {item.type === "adj_out" ? "-" : item.type === "adj_in" ? "+" : ""}
+                                    {item.qty.toLocaleString()}
+                                  </td>
                                   <td style={{ border: "2px solid black", padding: "6px", fontSize: "11px", textAlign: "left", color: "black" }}>{item.operatorName}</td>
                                   <td style={{ border: "2px solid black", padding: "6px", fontSize: "11px", textAlign: "left", fontWeight: "bold", color: "black" }}>{getPackingInfo(item)}</td>
                                   <td style={{ border: "2px solid black", padding: "6px", fontSize: "11px", textAlign: "center", color: "black" }}>{formatThaiDateTime(item.timestamp)}</td>

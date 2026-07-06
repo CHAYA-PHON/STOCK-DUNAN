@@ -1,5 +1,5 @@
 {
-  "name": "STOCK CENTER WSM-DUNAN",
+  "name": "WSM-DUNAN",
   "description": "ระบบจัดการสต๊อกสินค้าและพนักงานแบบเรียลไทม์ พร้อมระบบสแกน QR Code เช็คอิน และวิเคราะห์แดชบอร์ด",
   "requestFramePermissions": ["camera"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

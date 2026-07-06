@@ -970,11 +970,11 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-[11px] font-mono leading-relaxed">
           <div>
             <p className="text-gray-500">เวอร์ชันรหัสสินค้า:</p>
-            <p className="font-bold text-white mt-0.5">v2.5.0-Stable</p>
+            <p className="font-bold text-white mt-0.5">v2.6.0-Stable</p>
           </div>
           <div>
             <p className="text-gray-500">อัปเดตล่าสุดเมื่อ:</p>
-            <p className="font-bold text-white mt-0.5">30 มิถุนายน พ.ศ. 2569</p>
+            <p className="font-bold text-white mt-0.5">6 กรกฎาคม พ.ศ. 2569</p>
           </div>
           <div>
             <p className="text-gray-500">สภาพแวดล้อมจัดเก็บ:</p>

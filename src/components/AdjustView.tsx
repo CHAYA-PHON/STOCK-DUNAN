@@ -5,7 +5,7 @@ import { Product, Employee, AdjustRequest } from "../types";
 import { fuzzySearch } from "../utils/fuzzy";
 import { getSafeProductId } from "../utils/productUtils";
 import * as XLSX from "xlsx";
-import { Search, AlertCircle, Clock, Check, X, ShieldAlert, Edit, Upload, Clipboard, FileSpreadsheet, Sparkles, Plus } from "lucide-react";
+import { Search, AlertCircle, Clock, Check, X, ShieldAlert, Edit, Upload, Clipboard, FileSpreadsheet, Sparkles, Plus, Download } from "lucide-react";
 import { DEFAULT_BOI_CUSTOMERS, BOICustomer } from "../utils/boxSizeUtils";
 
 interface AdjustViewProps {
@@ -31,6 +31,14 @@ export default function AdjustView({ currentUser }: AdjustViewProps) {
 
   // Request list filters
   const [filterStatus, setFilterStatus] = useState<"all" | "pending" | "approved" | "rejected">("all");
+  const [filterMonth, setFilterMonth] = useState<string>(() => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    return `${y}-${m}`;
+  });
+  const [filterDate, setFilterDate] = useState<string>("");
+  const [filterCustomer, setFilterCustomer] = useState<string>("all");
 
   // Edit popups for Approver
   const [editingRequest, setEditingRequest] = useState<AdjustRequest | null>(null);
@@ -44,6 +52,35 @@ export default function AdjustView({ currentUser }: AdjustViewProps) {
   const [showPasteModal, setShowPasteModal] = useState(false);
   const [pastedText, setPastedText] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const downloadExcelTemplate = () => {
+    // Generate sample data using XLSX
+    const templateData = [
+      {
+        "ลูกค้า (Customer)": "DUNAN",
+        "พาร์ท/รหัสสินค้า (Part No)": "AJR76122306",
+        "จำนวนที่นับได้/ยอดนับจริง (Actual Stock)": 150
+      },
+      {
+        "ลูกค้า (Customer)": "DAIKIN",
+        "พาร์ท/รหัสสินค้า (Part No)": "DK-992384",
+        "จำนวนที่นับได้/ยอดนับจริง (Actual Stock)": 75
+      }
+    ];
+
+    const worksheet = XLSX.utils.json_to_sheet(templateData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "EOM Adjust Template");
+
+    // Adjust column widths for readability
+    worksheet["!cols"] = [
+      { wch: 20 }, // Customer
+      { wch: 25 }, // Part No
+      { wch: 35 }  // Actual Stock
+    ];
+
+    XLSX.writeFile(workbook, "EOM_Stock_Adjust_Template.xlsx");
+  };
 
   const handleEomImportExcel = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -602,8 +639,33 @@ export default function AdjustView({ currentUser }: AdjustViewProps) {
   };
 
   const filteredRequests = adjustRequests.filter((req) => {
-    if (filterStatus === "all") return true;
-    return req.status === filterStatus;
+    // 1. Status Filter
+    if (filterStatus !== "all" && req.status !== filterStatus) return false;
+
+    // 2. Customer Filter
+    if (filterCustomer !== "all") {
+      const match = products.find(p => p.partNo === req.partNo);
+      const cust = match ? match.customer.toUpperCase() : "";
+      if (cust !== filterCustomer.toUpperCase()) return false;
+    }
+
+    // 3. Date / Month Filter
+    const reqDate = req.timestamp;
+    const reqY = reqDate.getFullYear();
+    const reqM = String(reqDate.getMonth() + 1).padStart(2, "0");
+    const reqD = String(reqDate.getDate()).padStart(2, "0");
+
+    if (filterDate) {
+      // Specific Date: YYYY-MM-DD
+      const targetDate = `${reqY}-${reqM}-${reqD}`;
+      if (targetDate !== filterDate) return false;
+    } else if (filterMonth) {
+      // Month: YYYY-MM
+      const targetMonth = `${reqY}-${reqM}`;
+      if (targetMonth !== filterMonth) return false;
+    }
+
+    return true;
   });
 
   return (
@@ -642,10 +704,21 @@ export default function AdjustView({ currentUser }: AdjustViewProps) {
             {/* Box 1: File Upload */}
             <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-3.5 flex flex-col justify-between">
               <div>
-                <h4 className="font-bold text-xs text-white flex items-center gap-1.5">
-                  <Upload className="w-4 h-4 text-amber-400" />
-                  <span>นำเข้าด้วยไฟล์ Excel (.xlsx / .xls / .csv)</span>
-                </h4>
+                <div className="flex items-center justify-between gap-2">
+                  <h4 className="font-bold text-xs text-white flex items-center gap-1.5">
+                    <Upload className="w-4 h-4 text-amber-400" />
+                    <span>นำเข้าด้วยไฟล์ Excel (.xlsx / .xls / .csv)</span>
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={downloadExcelTemplate}
+                    title="ดาวน์โหลดไฟล์ฟอร์ม Excel ตัวอย่างสำหรับกรอกข้อมูลบันทึกสต๊อก"
+                    className="flex items-center gap-1 text-[10px] font-bold text-amber-400 hover:text-amber-300 bg-white/5 hover:bg-amber-100/10 px-2 py-1 rounded-lg border border-amber-500/20 transition cursor-pointer shrink-0"
+                  >
+                    <Download className="w-3.5 h-3.5 text-amber-400" />
+                    <span>ฟอร์มตัวอย่าง</span>
+                  </button>
+                </div>
                 <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
                   รองรับหัวคอลัมน์ภาษาไทย/อังกฤษ: ลูกค้า (Customer), พาร์ท/รหัสสินค้า (Part No), และ จำนวนที่นับได้/ยอดนับจริง (Actual Stock)
                 </p>
@@ -897,7 +970,7 @@ export default function AdjustView({ currentUser }: AdjustViewProps) {
               <p className="text-xs text-gray-400">คำร้องขอทั้งหมดจะถูกจัดหมวดหมู่และแสดงตามลำดับใหม่ล่าสุด</p>
             </div>
 
-            <div className="flex gap-1 bg-gray-100 p-1 rounded-xl">
+            <div className="flex gap-1 bg-gray-100 p-1 rounded-xl shrink-0">
               {(["all", "pending", "approved", "rejected"] as const).map((status) => (
                 <button
                   key={status}
@@ -909,6 +982,57 @@ export default function AdjustView({ currentUser }: AdjustViewProps) {
                   {status === "all" ? "ทั้งหมด" : status === "pending" ? "รออนุมัติ" : status === "approved" ? "อนุมัติแล้ว" : "ปฏิเสธ"}
                 </button>
               ))}
+            </div>
+          </div>
+
+          {/* New Filters Row */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-gray-50/50 p-3.5 rounded-xl border border-gray-100">
+            {/* Filter Month */}
+            <div className="space-y-1">
+              <label className="block text-[10px] font-bold text-gray-500 uppercase">เลือกเดือน (เริ่มต้นเป็นเดือนปัจจุบัน)</label>
+              <input
+                type="month"
+                value={filterMonth}
+                onChange={(e) => {
+                  setFilterMonth(e.target.value);
+                  setFilterDate(""); // Clear exact date if user clicks month input
+                }}
+                disabled={!!filterDate}
+                className="w-full text-xs font-semibold border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-red-500 bg-white disabled:bg-gray-100 disabled:text-gray-400 cursor-pointer"
+              />
+            </div>
+
+            {/* Filter Date */}
+            <div className="space-y-1">
+              <label className="block text-[10px] font-bold text-gray-500 uppercase flex items-center justify-between">
+                <span>ระบุเฉพาะวัน (วัน-เดือน-ปี)</span>
+                {filterDate && (
+                  <button onClick={() => setFilterDate("")} className="text-red-500 hover:text-red-600 font-bold lowercase text-[9px] cursor-pointer">
+                    [ล้างค่าวัน]
+                  </button>
+                )}
+              </label>
+              <input
+                type="date"
+                value={filterDate}
+                onChange={(e) => setFilterDate(e.target.value)}
+                className="w-full text-xs font-semibold border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-red-500 bg-white cursor-pointer"
+              />
+            </div>
+
+            {/* Filter Customer */}
+            <div className="space-y-1">
+              <label className="block text-[10px] font-bold text-gray-500 uppercase">เลือกลูกค้า</label>
+              <select
+                value={filterCustomer}
+                onChange={(e) => setFilterCustomer(e.target.value)}
+                className="w-full text-xs font-semibold border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-red-500 bg-white cursor-pointer"
+              >
+                <option value="all">ลูกค้าทั้งหมด (All Customers)</option>
+                {Array.from(new Set(products.map(p => p.customer).filter(Boolean))).map((cust) => (
+                  <option key={cust} value={cust}>{cust}</option>
+                ))}
+              </select>
             </div>
           </div>
 
