@@ -1228,7 +1228,7 @@ export default function App() {
 
           <div className="text-[10px] text-slate-600 border-t border-white/5 pt-3 leading-normal px-1">
             <p className="font-bold text-slate-500">WSM-DUNAN CENTER</p>
-            <p>เวอร์ชัน: v2.5.0 Stable Release</p>
+            <p>เวอร์ชัน: v2.5.2 Stable Release</p>
           </div>
         </div>
       </aside>

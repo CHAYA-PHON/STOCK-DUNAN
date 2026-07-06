@@ -23,7 +23,7 @@ export default function StockOutView({ currentUser, onAddToSyncQueue }: StockOut
 
   // Form States
   const [subType, setSubType] = useState("ส่งสโตร์ FG");
-  const [location, setLocation] = useState("");
+  const [location, setLocation] = useState("FG-05");
   const [shift, setShift] = useState<"DAY" | "NIGHT">("DAY");
   const [partSearch, setPartSearch] = useState("");
   const [qty, setQty] = useState<number>(0);
@@ -78,7 +78,8 @@ export default function StockOutView({ currentUser, onAddToSyncQueue }: StockOut
       snap.forEach((d) => items.push({ id: d.id, ...d.data() } as LocationItem));
       setLocations(items);
       if (items.length > 0 && !location) {
-        setLocation(items[0].name);
+        const hasFg05 = items.some((it) => it.name === "FG-05");
+        setLocation(hasFg05 ? "FG-05" : items[0].name);
       }
     });
 

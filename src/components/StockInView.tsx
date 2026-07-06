@@ -21,7 +21,7 @@ export default function StockInView({ currentUser, onAddToSyncQueue }: StockInVi
 
   // Form States
   const [subType, setSubType] = useState("รับเข้าจากฝ่ายผลิต");
-  const [location, setLocation] = useState("");
+  const [location, setLocation] = useState("ลานโอน-00");
   const [shift, setShift] = useState<"DAY" | "NIGHT">("DAY");
   const [partSearch, setPartSearch] = useState("");
   const [qty, setQty] = useState<number>(0);
@@ -80,7 +80,8 @@ export default function StockInView({ currentUser, onAddToSyncQueue }: StockInVi
       snap.forEach((d) => items.push({ id: d.id, ...d.data() } as LocationItem));
       setLocations(items);
       if (items.length > 0 && !location) {
-        setLocation(items[0].name);
+        const hasLanOn = items.some((it) => it.name === "ลานโอน-00");
+        setLocation(hasLanOn ? "ลานโอน-00" : items[0].name);
       }
     });
 

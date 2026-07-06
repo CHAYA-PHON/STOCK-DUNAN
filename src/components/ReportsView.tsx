@@ -53,6 +53,7 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
   const [editingTxShift, setEditingTxShift] = useState<string>("");
   const [editingTxSubType, setEditingTxSubType] = useState<string>("");
   const [deleteConfirmTxId, setDeleteConfirmTxId] = useState<string | null>(null);
+  const [adjustStockOnDelete, setAdjustStockOnDelete] = useState<boolean>(true);
 
   // Active printable slip layout states
   const [slipPreviewOpen, setSlipPreviewOpen] = useState(false);
@@ -290,33 +291,43 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
       );
 
       if (pMatch) {
-        const currentProdStock = pMatch.stock || 0;
-        let finalStock = currentProdStock;
-        if (tx.type === "in" || tx.type === "adj_in") {
-          finalStock = currentProdStock - tx.qty;
-        } else if (tx.type === "out" || tx.type === "adj_out") {
-          finalStock = currentProdStock + tx.qty;
+        if (adjustStockOnDelete) {
+          const currentProdStock = pMatch.stock || 0;
+          let finalStock = currentProdStock;
+          if (tx.type === "in" || tx.type === "adj_in") {
+            finalStock = currentProdStock - tx.qty;
+          } else if (tx.type === "out" || tx.type === "adj_out") {
+            finalStock = currentProdStock + tx.qty;
+          }
+
+          if (finalStock < 0) {
+            const confirmForce = window.confirm(
+              `⚠️ คำเตือน!\nเนื่องจากรายการนี้เป็นยอดรับเข้าสินค้า หากทำการลบจะหักสต๊อกออก และส่งผลให้สต๊อกคงเหลือต่ำกว่า 0 (สต๊อกปัจจุบัน: ${currentProdStock} ชิ้น, จำนวนที่จะหักออก: ${tx.qty} ชิ้น)\n\nคุณต้องการลบรายการนี้โดยปรับสต๊อกสินค้าคงเหลือเป็น 0 ชิ้น ใช่หรือไม่?`
+            );
+            if (!confirmForce) {
+              setDeleteConfirmTxId(null);
+              return;
+            }
+            finalStock = 0;
+          }
+
+          // 1. Delete transaction in Firestore
+          await deleteDoc(doc(db, "inventory_log", tx.id));
+
+          // 2. Adjust product stock
+          const pRef = doc(db, "products", pMatch.id);
+          await updateDoc(pRef, { stock: finalStock });
+        } else {
+          // Delete transaction log only, do not touch stock
+          await deleteDoc(doc(db, "inventory_log", tx.id));
         }
-
-        if (finalStock < 0) {
-          alert(`⚠️ ไม่สามารถลบรายการได้!\nเนื่องจากรายการนี้เป็นยอดรับเข้าสินค้า หากทำการลบจะหักสต๊อกออก และส่งผลให้สต๊อกคงเหลือติดลบได้ (สต๊อกปัจจุบัน: ${currentProdStock} ชิ้น, จำนวนที่จะหักออก: ${tx.qty} ชิ้น)`);
-          setDeleteConfirmTxId(null);
-          return;
-        }
-
-        // 1. Delete transaction in Firestore
-        await deleteDoc(doc(db, "inventory_log", tx.id));
-
-        // 2. Adjust product stock
-        const pRef = doc(db, "products", pMatch.id);
-        await updateDoc(pRef, { stock: finalStock });
       } else {
         // Just delete transaction if product is already gone
         await deleteDoc(doc(db, "inventory_log", tx.id));
       }
 
       setDeleteConfirmTxId(null);
-      alert("ลบรายการและคืนยอดสต๊อกสินค้าสำเร็จ");
+      alert("ลบรายการธุรกรรมเรียบร้อยแล้ว");
     } catch (err: any) {
       console.error(err);
       alert("เกิดข้อผิดพลาดในการลบ: " + err.message);
@@ -327,8 +338,7 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
     try {
       const batch = writeBatch(db);
       let successCount = 0;
-      let failureCount = 0;
-      let reason = "";
+      let capZeroCount = 0;
 
       for (const txId of txIds) {
         const tx = transactions.find((t) => t.id === txId);
@@ -341,22 +351,23 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
         );
 
         if (pMatch) {
-          const currentProdStock = pMatch.stock || 0;
-          let finalStock = currentProdStock;
-          if (tx.type === "in" || tx.type === "adj_in") {
-            finalStock = currentProdStock - tx.qty;
-          } else if (tx.type === "out" || tx.type === "adj_out") {
-            finalStock = currentProdStock + tx.qty;
-          }
+          if (adjustStockOnDelete) {
+            const currentProdStock = pMatch.stock || 0;
+            let finalStock = currentProdStock;
+            if (tx.type === "in" || tx.type === "adj_in") {
+              finalStock = currentProdStock - tx.qty;
+            } else if (tx.type === "out" || tx.type === "adj_out") {
+              finalStock = currentProdStock + tx.qty;
+            }
 
-          if (finalStock < 0) {
-            failureCount++;
-            reason = `สต๊อกสินค้า ${tx.partNo} จะติดลบ (คงเหลือปัจจุบัน: ${currentProdStock} ชิ้น)`;
-            continue;
-          }
+            if (finalStock < 0) {
+              finalStock = 0;
+              capZeroCount++;
+            }
 
+            batch.update(doc(db, "products", pMatch.id), { stock: finalStock });
+          }
           batch.delete(doc(db, "inventory_log", tx.id));
-          batch.update(doc(db, "products", pMatch.id), { stock: finalStock });
           successCount++;
         } else {
           batch.delete(doc(db, "inventory_log", tx.id));
@@ -368,8 +379,8 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
         await batch.commit();
       }
 
-      if (failureCount > 0) {
-        alert(`ลบสำเร็จ ${successCount} รายการ, ล้มเหลว ${failureCount} รายการ\nสาเหตุที่ล้มเหลว: ${reason}`);
+      if (capZeroCount > 0) {
+        alert(`ลบสำเร็จทั้งหมด ${successCount} รายการ!\n(มี ${capZeroCount} รายการที่หักลบสต๊อกต่ำกว่า 0 ระบบจึงปรับยอดสต๊อกคงเหลือเป็น 0 ชิ้นอัตโนมัติ)`);
       } else {
         alert(`ลบรายการที่เลือกทั้งหมด ${successCount} รายการสำเร็จ และปรับยอดสต๊อกเรียบร้อยแล้ว`);
       }
@@ -451,22 +462,23 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
         );
 
         if (pMatch) {
-          const currentProdStock = pMatch.stock || 0;
-          let finalStock = currentProdStock;
-          if (txDetail.type === "in" || txDetail.type === "adj_in") {
-            finalStock = currentProdStock - txDetail.qty;
-          } else if (txDetail.type === "out" || txDetail.type === "adj_out") {
-            finalStock = currentProdStock + txDetail.qty;
-          }
+          if (adjustStockOnDelete) {
+            const currentProdStock = pMatch.stock || 0;
+            let finalStock = currentProdStock;
+            if (txDetail.type === "in" || txDetail.type === "adj_in") {
+              finalStock = currentProdStock - txDetail.qty;
+            } else if (txDetail.type === "out" || txDetail.type === "adj_out") {
+              finalStock = currentProdStock + txDetail.qty;
+            }
 
-          if (finalStock < 0) {
-            failureCount++;
-            reason = `สต๊อกสินค้า ${txDetail.partNo} จะติดลบ (คงเหลือปัจจุบัน: ${currentProdStock} ชิ้น)`;
-            continue;
-          }
+            if (finalStock < 0) {
+              finalStock = 0;
+              failureCount++; // Using failureCount here to track items that got capped to 0 for summary report
+            }
 
+            batch.update(doc(db, "products", pMatch.id), { stock: finalStock });
+          }
           batch.delete(doc(db, "inventory_log", txId));
-          batch.update(doc(db, "products", pMatch.id), { stock: finalStock });
           successCount++;
         } else {
           batch.delete(doc(db, "inventory_log", txId));
@@ -493,14 +505,14 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
         type: "approval",
       });
 
-      if (successCount > 0 || failureCount === 0) {
+      if (successCount > 0) {
         await batch.commit();
       }
 
       if (failureCount > 0) {
-        alert(`อนุมัติและลบสำเร็จ ${successCount} รายการ, ล้มเหลว ${failureCount} รายการ\nสาเหตุ: ${reason}`);
+        alert(`อนุมัติคำขอลบสำเร็จทั้งหมด ${successCount} รายการ!\n(มีสินค้าบางรายการที่คำนวณแล้วสต๊อกต่ำกว่า 0 ระบบจึงได้ปรับยอดสต๊อกเป็น 0 ชิ้นเรียบร้อยแล้ว)`);
       } else {
-        alert("อนุมัติคำขอลบและปรับปรุงยอดสต๊อกเรียบร้อยแล้ว");
+        alert("อนุมัติคำขอลบและปรับปรุงยอดสต๊อกสินค้าเรียบร้อยแล้ว");
       }
     } catch (err: any) {
       console.error(err);
@@ -1885,17 +1897,19 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
                             })}
 
                             {/* Page total quantity summary */}
-                            <tr style={{ backgroundColor: "#f8fafc" }}>
-                              <td colSpan={3} style={{ border: "2px solid black", padding: "6px", fontSize: "11px", textAlign: "right", fontWeight: "bold", color: "black" }}>
-                                สรุปประจำหน้า {pageIdx + 1} (Page Qty Total):
-                              </td>
-                              <td style={{ border: "2px solid black", padding: "6px", fontSize: "11px", textAlign: "right", fontWeight: "extrabold", color: "black" }}>
-                                {pageQty.toLocaleString()}
-                              </td>
-                              <td colSpan={3} style={{ border: "2px solid black", padding: "6px", fontSize: "11px", color: "black", fontWeight: "bold" }}>
-                                ชิ้น (Pcs)
-                              </td>
-                            </tr>
+                            {chunkedPages.length > 1 && (
+                              <tr style={{ backgroundColor: "#f8fafc" }}>
+                                <td colSpan={3} style={{ border: "2px solid black", padding: "6px", fontSize: "11px", textAlign: "right", fontWeight: "bold", color: "black" }}>
+                                  สรุปประจำหน้า {pageIdx + 1} (Page Qty Total):
+                                </td>
+                                <td style={{ border: "2px solid black", padding: "6px", fontSize: "11px", textAlign: "right", fontWeight: "extrabold", color: "black" }}>
+                                  {pageQty.toLocaleString()}
+                                </td>
+                                <td colSpan={3} style={{ border: "2px solid black", padding: "6px", fontSize: "11px", color: "black", fontWeight: "bold" }}>
+                                  ชิ้น (Pcs)
+                                </td>
+                              </tr>
+                            )}
 
                             {/* Grand total quantity summary on the last page */}
                             {isLastPage && (
@@ -2070,6 +2084,27 @@ export default function ReportsView({ currentUser }: ReportsViewProps) {
                 placeholder="• • • • • •"
                 className="w-full text-center text-2xl tracking-[0.5em] p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-500/20 focus:outline-none font-mono"
               />
+            </div>
+
+            {/* TOGGLE FOR ADJUST STOCK */}
+            <div className="bg-gray-50 p-3 rounded-xl border border-gray-100/80 space-y-2">
+              <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={adjustStockOnDelete}
+                  onChange={(e) => setAdjustStockOnDelete(e.target.checked)}
+                  className="mt-0.5 rounded text-red-600 focus:ring-red-500 w-4 h-4 cursor-pointer"
+                />
+                <div className="text-left">
+                  <p className="text-xs font-bold text-gray-800">ปรับยอดสต๊อกสินค้าอัตโนมัติ</p>
+                  <p className="text-[10px] text-gray-500">คำนวณหักลบยอดเข้า-ออกจริงในคลัง (แนะนำให้เปิดใช้งานเสมอ)</p>
+                </div>
+              </label>
+              {!adjustStockOnDelete && (
+                <p className="text-[9px] text-amber-600 font-bold bg-amber-50 p-1.5 rounded border border-amber-100">
+                  ⚠️ ปิดปรับยอด: ระบบจะลบประวัติธุรกรรมนี้ออก โดยไม่มีการเปลี่ยนแปลงยอดในสต๊อกใดๆ ทั้งสิ้น
+                </p>
+              )}
             </div>
 
             <div className="flex justify-center gap-2 text-xs pt-2">
