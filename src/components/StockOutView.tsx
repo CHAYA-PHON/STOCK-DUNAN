@@ -23,7 +23,7 @@ export default function StockOutView({ currentUser, onAddToSyncQueue }: StockOut
 
   // Form States
   const [subType, setSubType] = useState("ส่งสโตร์ FG");
-  const [location, setLocation] = useState("FG-05");
+  const [location, setLocation] = useState("ลานโอน-00");
   const [shift, setShift] = useState<"DAY" | "NIGHT">("DAY");
   const [partSearch, setPartSearch] = useState("");
   const [qty, setQty] = useState<number>(0);
@@ -78,8 +78,8 @@ export default function StockOutView({ currentUser, onAddToSyncQueue }: StockOut
       snap.forEach((d) => items.push({ id: d.id, ...d.data() } as LocationItem));
       setLocations(items);
       if (items.length > 0 && !location) {
-        const hasFg05 = items.some((it) => it.name === "FG-05");
-        setLocation(hasFg05 ? "FG-05" : items[0].name);
+        const hasLanOn = items.some((it) => it.name === "ลานโอน-00");
+        setLocation(hasLanOn ? "ลานโอน-00" : items[0].name);
       }
     });
 
@@ -465,13 +465,13 @@ export default function StockOutView({ currentUser, onAddToSyncQueue }: StockOut
                 <label className="text-xs font-semibold text-gray-600">Location ต้นทาง</label>
                 <input
                   type="text"
-                  list="locations-datalist"
+                  list="locations-out-datalist"
                   value={location}
                   onChange={(e) => setLocation(e.target.value)}
                   placeholder="พิมพ์ค้นหา/เลือกสถานที่..."
                   className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-red-500 bg-white"
                 />
-                <datalist id="locations-datalist">
+                <datalist id="locations-out-datalist">
                   {locations.map((loc) => (
                     <option key={loc.id} value={loc.name}>
                       {loc.name}

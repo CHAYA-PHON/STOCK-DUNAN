@@ -447,13 +447,13 @@ export default function StockInView({ currentUser, onAddToSyncQueue }: StockInVi
                 <label className="text-xs font-semibold text-gray-600">Location ปลายทาง</label>
                 <input
                   type="text"
-                  list="locations-datalist"
+                  list="locations-in-datalist"
                   value={location}
                   onChange={(e) => setLocation(e.target.value)}
                   placeholder="พิมพ์ค้นหา/เลือกสถานที่..."
                   className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-red-500 bg-white"
                 />
-                <datalist id="locations-datalist">
+                <datalist id="locations-in-datalist">
                   {locations.map((loc) => (
                     <option key={loc.id} value={loc.name}>
                       {loc.name}

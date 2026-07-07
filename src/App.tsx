@@ -839,9 +839,12 @@ export default function App() {
       {/* Mobile top navbar */}
       <header className="md:hidden bg-[#111] text-white h-16 shrink-0 flex justify-between items-center px-4 border-b border-white/10 print:hidden sticky top-0 z-50">
         <div className="flex items-center gap-2">
-          <div className="w-7 h-7 bg-red-600 flex items-center justify-center rounded">
-            <div className="w-3.5 h-3.5 bg-white rounded-sm"></div>
-          </div>
+          <img
+            src="/src/assets/images/app_icon_1783389098658.jpg"
+            alt="WSM-DUNAN App Icon"
+            referrerPolicy="no-referrer"
+            className="w-7 h-7 rounded object-cover border border-white/10"
+          />
           <span className="font-bold text-sm tracking-tight text-white">WSM-DUNAN</span>
         </div>
         <div className="flex items-center gap-2.5">
@@ -949,9 +952,12 @@ export default function App() {
         <div className="space-y-6">
           <div className="flex items-center justify-between gap-2 px-1">
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 bg-red-600 flex items-center justify-center rounded-lg shadow-md shadow-red-600/20">
-                <div className="w-4 h-4 bg-white rounded-sm"></div>
-              </div>
+              <img
+                src="/src/assets/images/app_icon_1783389098658.jpg"
+                alt="WSM-DUNAN App Icon"
+                referrerPolicy="no-referrer"
+                className="w-8 h-8 rounded-lg object-cover border border-white/10 shadow-md shadow-red-600/10"
+              />
               <h1 className="text-white font-bold text-lg tracking-tight">WSM-DUNAN</h1>
             </div>
 
