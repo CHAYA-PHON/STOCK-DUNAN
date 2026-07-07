@@ -9,4 +9,4 @@ Format definition:
 
 **Rule**: Every time an update or modification is made, increment the version accordingly.
 - Current Baseline: `v26.5.0`
-- Current Version after recent fixes (Updated versioning rule to Year-based Major): `v26.5.2`
+- Current Version after recent fixes (Implemented Network-First SW caching strategy to prevent stale 404 bundle assets): `v26.5.3`
