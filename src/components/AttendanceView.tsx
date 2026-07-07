@@ -3,7 +3,7 @@ import { collection, onSnapshot, doc, setDoc, updateDoc, getDoc } from "firebase
 import { db } from "../firebase";
 import { Employee, TimeAttendance, AttendanceRequest } from "../types";
 import { calculateAttendance } from "../utils/timeTracker";
-import { Clock, Calendar, CheckCircle2, UserCheck, AlertTriangle, Moon, Sun, ArrowRight, ClipboardList, ShieldAlert, HelpCircle, Info, Lightbulb, X, Camera } from "lucide-react";
+import { Clock, Calendar, CheckCircle2, UserCheck, AlertTriangle, Moon, Sun, ArrowRight, ClipboardList, ShieldAlert, HelpCircle, Info, Lightbulb, X, Camera, Search, Users, BarChart3 } from "lucide-react";
 
 interface AttendanceViewProps {
   currentUser: Employee | null;
@@ -20,11 +20,19 @@ export default function AttendanceView({ currentUser }: AttendanceViewProps) {
   const [requestDetail, setRequestDetail] = useState("");
   const [proposedIn, setProposedIn] = useState("08:30");
   const [proposedOut, setProposedOut] = useState("17:30");
+  const [adjustIn, setAdjustIn] = useState(true);
+  const [adjustOut, setAdjustOut] = useState(true);
   const [requestDate, setRequestDate] = useState(new Date().toISOString().split("T")[0]);
   const [leaveType, setLeaveType] = useState("ลากิจ"); // ลากิจ, ลาป่วย, ลาพักร้อน
 
   // Manager filter state
   const [selectedShiftFilter, setSelectedShiftFilter] = useState<"DAY" | "NIGHT">("DAY");
+  const [nameFilter, setNameFilter] = useState("");
+  const [monthFilter, setMonthFilter] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  });
+  const [viewMode, setViewMode] = useState<"daily" | "summary">("daily");
 
   // Shift Rotation planner state
   const [rotationSettings, setRotationSettings] = useState({
@@ -148,6 +156,11 @@ export default function AttendanceView({ currentUser }: AttendanceViewProps) {
       return;
     }
 
+    if (reqType === "forgot_time" && !adjustIn && !adjustOut) {
+      alert("กรุณาเลือกปรับเวลาเข้างาน หรือเวลาเลิกงาน อย่างใดอย่างหนึ่งหรือทั้งสองอย่าง");
+      return;
+    }
+
     const reqId = `REQ-${Date.now().toString().slice(-6)}`;
     const id = `${currentUser.id}_${requestDate}`;
 
@@ -156,11 +169,18 @@ export default function AttendanceView({ currentUser }: AttendanceViewProps) {
       type: reqType,
       requestType: reqType === "leave" ? leaveType : "ลืมสแกนเวลา",
       detail: requestDetail,
-      proposedCheckIn: reqType === "forgot_time" ? proposedIn : undefined,
-      proposedCheckOut: reqType === "forgot_time" ? proposedOut : undefined,
       status: "pending",
       timestamp: new Date(),
     };
+
+    if (reqType === "forgot_time") {
+      if (adjustIn) {
+        newReq.proposedCheckIn = proposedIn;
+      }
+      if (adjustOut) {
+        newReq.proposedCheckOut = proposedOut;
+      }
+    }
 
     try {
       // Pull current attendance record or create empty
@@ -186,6 +206,8 @@ export default function AttendanceView({ currentUser }: AttendanceViewProps) {
 
       alert("ส่งคำร้องขอเสร็จสมบูรณ์ เพื่อรอหัวหน้างานอนุมัติพิจารณา");
       setRequestDetail("");
+      setAdjustIn(true);
+      setAdjustOut(true);
     } catch (err) {
       console.error(err);
     }
@@ -221,14 +243,24 @@ export default function AttendanceView({ currentUser }: AttendanceViewProps) {
 
       if (decision === "approved" && matchedReq) {
         if (matchedReq.type === "forgot_time") {
-          const inTime = matchedReq.proposedCheckIn || "08:30";
-          const outTime = matchedReq.proposedCheckOut || "17:30";
-          const { workHours, otHours } = calculateAttendance(inTime, outTime, data.shift);
+          const inTime = matchedReq.proposedCheckIn !== undefined ? matchedReq.proposedCheckIn : (data.checkIn || "");
+          const outTime = matchedReq.proposedCheckOut !== undefined ? matchedReq.proposedCheckOut : (data.checkOut || "");
 
-          updates.checkIn = inTime;
-          updates.checkOut = outTime;
-          updates.workHours = workHours;
-          updates.otHours = otHours;
+          if (inTime) {
+            updates.checkIn = inTime;
+          }
+          if (outTime) {
+            updates.checkOut = outTime;
+          }
+
+          if (inTime && outTime) {
+            const { workHours, otHours } = calculateAttendance(inTime, outTime, data.shift);
+            updates.workHours = workHours;
+            updates.otHours = otHours;
+          } else {
+            updates.workHours = 0;
+            updates.otHours = 0;
+          }
         } else {
           // If leave: set workHours = 8 and otHours = 0 (paid leave)
           updates.checkIn = "LEAVE";
@@ -345,6 +377,108 @@ export default function AttendanceView({ currentUser }: AttendanceViewProps) {
       }));
   });
 
+  // Filter logs according to role (Employee: only own, Manager: all with name & month filter)
+  const filteredRecords = attendances
+    .filter((rec) => {
+      // 1. Role-based view constraint
+      if (!isManager) {
+        if (rec.empId !== currentUser?.id) return false;
+      } else {
+        // Manager name filter
+        if (nameFilter.trim()) {
+          const query = nameFilter.toLowerCase();
+          const matchesName = rec.empName?.toLowerCase().includes(query);
+          const matchesId = rec.empId?.toLowerCase().includes(query);
+          if (!matchesName && !matchesId) return false;
+        }
+      }
+
+      // 2. Month filter (date is YYYY-MM-DD, monthFilter is YYYY-MM)
+      if (monthFilter) {
+        if (!rec.date?.startsWith(monthFilter)) return false;
+      }
+
+      return true;
+    })
+    .sort((a, b) => b.date.localeCompare(a.date)); // Sort newest first
+
+  // Compile monthly work hour summaries for all employees (For Managers)
+  const filteredSummaries = React.useMemo(() => {
+    if (!isManager) return [];
+
+    const summaries = employees.map((emp) => {
+      const empRecords = attendances.filter(
+        (rec) => rec.empId === emp.id && (!monthFilter || rec.date?.startsWith(monthFilter))
+      );
+
+      let daysWorked = 0;
+      let totalWorkHours = 0;
+      let totalOtHours = 0;
+      let daysLeave = 0;
+
+      empRecords.forEach((rec) => {
+        const isLeave = rec.checkIn === "LEAVE" || rec.checkOut === "LEAVE";
+        if (isLeave) {
+          daysLeave += 1;
+        } else {
+          if (rec.checkIn) {
+            daysWorked += 1;
+          }
+          totalWorkHours += rec.workHours || 0;
+          totalOtHours += rec.otHours || 0;
+        }
+      });
+
+      return {
+        empId: emp.id,
+        empName: emp.name,
+        empRole: emp.role,
+        department: emp.department || "คลังสินค้า",
+        daysWorked,
+        daysLeave,
+        totalWorkHours,
+        totalOtHours,
+        totalHours: totalWorkHours + totalOtHours,
+      };
+    });
+
+    if (nameFilter.trim()) {
+      const query = nameFilter.toLowerCase();
+      return summaries.filter(
+        (s) =>
+          s.empName.toLowerCase().includes(query) ||
+          s.empId.toLowerCase().includes(query)
+      );
+    }
+
+    return summaries;
+  }, [employees, attendances, monthFilter, nameFilter, isManager]);
+
+  // Compile grand totals of active summaries for selected month
+  const grandTotals = React.useMemo(() => {
+    let activeEmployees = 0;
+    let totalRegularHrs = 0;
+    let totalOtHrs = 0;
+    let totalLeaveDays = 0;
+
+    filteredSummaries.forEach((s) => {
+      if (s.daysWorked > 0 || s.daysLeave > 0) {
+        activeEmployees++;
+      }
+      totalRegularHrs += s.totalWorkHours;
+      totalOtHrs += s.totalOtHours;
+      totalLeaveDays += s.daysLeave;
+    });
+
+    return {
+      activeEmployees,
+      totalRegularHrs,
+      totalOtHrs,
+      totalLeaveDays,
+      totalCombinedHrs: totalRegularHrs + totalOtHrs,
+    };
+  }, [filteredSummaries]);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-gray-100 pb-5">
@@ -453,7 +587,7 @@ export default function AttendanceView({ currentUser }: AttendanceViewProps) {
               </button>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 text-xs">
+            <div className="space-y-3 text-xs">
               <div>
                 <label className="text-gray-500 font-medium">วันที่ขอทำรายการ</label>
                 <input
@@ -461,7 +595,7 @@ export default function AttendanceView({ currentUser }: AttendanceViewProps) {
                   required
                   value={requestDate}
                   onChange={(e) => setRequestDate(e.target.value)}
-                  className="w-full mt-1 p-2 border rounded-lg font-semibold bg-white"
+                  className="w-full mt-1 p-2 border border-gray-200 rounded-xl font-semibold bg-white"
                 />
               </div>
 
@@ -471,7 +605,7 @@ export default function AttendanceView({ currentUser }: AttendanceViewProps) {
                   <select
                     value={leaveType}
                     onChange={(e) => setLeaveType(e.target.value)}
-                    className="w-full mt-1 p-2 border rounded-lg font-semibold bg-white text-xs"
+                    className="w-full mt-1 p-2 border border-gray-200 rounded-xl font-semibold bg-white text-xs"
                   >
                     <option value="ลากิจ">ลากิจ (Personal Leave)</option>
                     <option value="ลาป่วย">ลาป่วย (Sick Leave)</option>
@@ -479,24 +613,60 @@ export default function AttendanceView({ currentUser }: AttendanceViewProps) {
                   </select>
                 </div>
               ) : (
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="text-gray-500 font-medium">เวลาเข้างาน</label>
-                    <input
-                      type="text"
-                      value={proposedIn}
-                      onChange={(e) => setProposedIn(e.target.value)}
-                      className="w-full mt-1 p-1.5 border rounded-lg text-center font-mono font-bold"
-                    />
+                <div className="space-y-3 bg-gray-50 p-3.5 rounded-2xl border border-gray-100">
+                  <div className="flex items-center justify-between border-b border-gray-200/60 pb-2">
+                    <span className="font-bold text-gray-700 text-[10px]">เลือกปรับเวลา:</span>
+                    <div className="flex gap-3">
+                      <label className="inline-flex items-center gap-1 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={adjustIn}
+                          onChange={(e) => setAdjustIn(e.target.checked)}
+                          className="rounded text-red-600 focus:ring-red-500 w-3.5 h-3.5 cursor-pointer"
+                        />
+                        <span className="font-bold text-gray-700 text-[11px]">เข้างาน</span>
+                      </label>
+                      <label className="inline-flex items-center gap-1 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={adjustOut}
+                          onChange={(e) => setAdjustOut(e.target.checked)}
+                          className="rounded text-red-600 focus:ring-red-500 w-3.5 h-3.5 cursor-pointer"
+                        />
+                        <span className="font-bold text-gray-700 text-[11px]">ออกงาน</span>
+                      </label>
+                    </div>
                   </div>
-                  <div>
-                    <label className="text-gray-500 font-medium">เวลาออกงาน</label>
-                    <input
-                      type="text"
-                      value={proposedOut}
-                      onChange={(e) => setProposedOut(e.target.value)}
-                      className="w-full mt-1 p-1.5 border rounded-lg text-center font-mono font-bold"
-                    />
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className={`text-gray-500 font-semibold flex items-center gap-1.5 ${!adjustIn ? "opacity-40" : ""}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${adjustIn ? "bg-green-500" : "bg-gray-300"}`} />
+                        <span>เวลาเข้างาน</span>
+                      </label>
+                      <input
+                        type="text"
+                        disabled={!adjustIn}
+                        value={proposedIn}
+                        onChange={(e) => setProposedIn(e.target.value)}
+                        placeholder="เช่น 08:30"
+                        className="w-full mt-1.5 p-2 border border-gray-200 rounded-xl text-center font-mono font-bold disabled:bg-gray-100/70 disabled:text-gray-300 disabled:border-gray-100 bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className={`text-gray-500 font-semibold flex items-center gap-1.5 ${!adjustOut ? "opacity-40" : ""}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${adjustOut ? "bg-red-500" : "bg-gray-300"}`} />
+                        <span>เวลาออกงาน</span>
+                      </label>
+                      <input
+                        type="text"
+                        disabled={!adjustOut}
+                        value={proposedOut}
+                        onChange={(e) => setProposedOut(e.target.value)}
+                        placeholder="เช่น 17:30"
+                        className="w-full mt-1.5 p-2 border border-gray-200 rounded-xl text-center font-mono font-bold disabled:bg-gray-100/70 disabled:text-gray-300 disabled:border-gray-100 bg-white"
+                      />
+                    </div>
                   </div>
                 </div>
               )}
@@ -549,7 +719,14 @@ export default function AttendanceView({ currentUser }: AttendanceViewProps) {
                             วันที่เสนอ: <span className="font-semibold text-gray-700">{req.date}</span> (กะ {req.shift})
                           </p>
                           <p className="text-red-700 font-bold">
-                            คำขอ: [{req.requestType}] {req.type === "forgot_time" ? `(เสนอเข้า: ${req.proposedCheckIn} / เลิก: ${req.proposedCheckOut})` : ""}
+                            คำขอ: [{req.requestType}] {
+                              req.type === "forgot_time" 
+                                ? `(${[
+                                    req.proposedCheckIn ? `เสนอเข้า: ${req.proposedCheckIn}` : null,
+                                    req.proposedCheckOut ? `เลิก: ${req.proposedCheckOut}` : null
+                                  ].filter(Boolean).join(" / ")})`
+                                : ""
+                            }
                           </p>
                           <p className="text-gray-400 italic">" {req.detail} "</p>
                         </div>
@@ -717,6 +894,331 @@ export default function AttendanceView({ currentUser }: AttendanceViewProps) {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Attendance Logs History Section */}
+      <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-gray-50 pb-4">
+          <div className="space-y-1">
+            <h3 className="font-bold text-gray-800 flex items-center gap-1.5 text-base">
+              <ClipboardList className="w-5 h-5 text-red-600" />
+              <span>ประวัติการลงเวลาทำงาน (Attendance History)</span>
+            </h3>
+            <p className="text-[11px] text-gray-400">
+              {isManager 
+                ? "แสดงข้อมูลลงเวลาทำงานของพนักงานทั้งหมดในระบบตามเงื่อนไขฟิลเตอร์" 
+                : "แสดงข้อมูลลงเวลาทำงานเฉพาะของคุณเอง"
+              }
+            </p>
+          </div>
+
+          {/* Filters Row */}
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Tab selection for managers */}
+            {isManager && (
+              <div className="flex bg-gray-100 p-1 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => setViewMode("daily")}
+                  className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all ${
+                    viewMode === "daily"
+                      ? "bg-white text-gray-950 shadow-sm"
+                      : "text-gray-500 hover:text-gray-950"
+                  }`}
+                >
+                  ลงเวลารายวัน
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("summary")}
+                  className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all flex items-center gap-1 ${
+                    viewMode === "summary"
+                      ? "bg-white text-gray-950 shadow-sm"
+                      : "text-gray-500 hover:text-gray-950"
+                  }`}
+                >
+                  <BarChart3 className="w-3 h-3 text-red-600" />
+                  สรุปรายเดือน
+                </button>
+              </div>
+            )}
+
+            {/* Filter Month */}
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-bold text-gray-400 uppercase">เลือกเดือน</span>
+              <input
+                type="month"
+                value={monthFilter}
+                onChange={(e) => setMonthFilter(e.target.value)}
+                className="border border-gray-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-red-500 font-semibold bg-white cursor-pointer h-9"
+              />
+            </div>
+
+            {/* Filter Name (Manager only) */}
+            {isManager && (
+              <div className="flex flex-col gap-1 w-full sm:w-56">
+                <span className="text-[10px] font-bold text-gray-400 uppercase">ค้นหาพนักงาน</span>
+                <div className="relative">
+                  <input
+                    type="text"
+                    placeholder="ค้นหาด้วยชื่อ หรือ รหัสพนักงาน..."
+                    value={nameFilter}
+                    onChange={(e) => setNameFilter(e.target.value)}
+                    className="w-full border border-gray-200 rounded-xl pl-8 pr-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-red-500 font-medium bg-white h-9 placeholder-gray-300"
+                  />
+                  <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-2.5" />
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Grand Monthly Summary Cards (Only for Managers in Summary mode) */}
+        {isManager && viewMode === "summary" && (
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3.5 pt-1">
+            <div className="bg-slate-50/60 p-3.5 rounded-2xl border border-slate-100 shadow-sm space-y-1">
+              <span className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1">
+                <Users className="w-3.5 h-3.5 text-slate-500" />
+                <span>พนักงานปฏิบัติงาน</span>
+              </span>
+              <div className="flex items-baseline gap-1">
+                <span className="text-xl font-extrabold text-slate-800 font-mono">{grandTotals.activeEmployees}</span>
+                <span className="text-[10px] text-slate-400 font-semibold">คน</span>
+              </div>
+            </div>
+
+            <div className="bg-slate-50/60 p-3.5 rounded-2xl border border-slate-100 shadow-sm space-y-1">
+              <span className="text-[10px] font-bold text-gray-400 uppercase flex items-center gap-1">
+                <Clock className="w-3.5 h-3.5 text-red-500" />
+                <span>ชม. งานปกติรวม</span>
+              </span>
+              <div className="flex items-baseline gap-1">
+                <span className="text-xl font-extrabold text-slate-800 font-mono">{grandTotals.totalRegularHrs}</span>
+                <span className="text-[10px] text-slate-400 font-semibold">ชม.</span>
+              </div>
+            </div>
+
+            <div className="bg-slate-50/60 p-3.5 rounded-2xl border border-slate-100 shadow-sm space-y-1">
+              <span className="text-[10px] font-bold text-red-400 uppercase flex items-center gap-1">
+                <Clock className="w-3.5 h-3.5 text-red-600" />
+                <span>ชม. OT รวม</span>
+              </span>
+              <div className="flex items-baseline gap-1">
+                <span className="text-xl font-extrabold text-red-600 font-mono">{grandTotals.totalOtHrs}</span>
+                <span className="text-[10px] text-red-400 font-semibold">ชม.</span>
+              </div>
+            </div>
+
+            <div className="bg-emerald-50/40 p-3.5 rounded-2xl border border-emerald-100/40 shadow-sm space-y-1">
+              <span className="text-[10px] font-bold text-emerald-600/80 uppercase flex items-center gap-1">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                <span>รวมเวลาปฏิบัติงาน</span>
+              </span>
+              <div className="flex items-baseline gap-1">
+                <span className="text-xl font-extrabold text-emerald-700 font-mono">{grandTotals.totalCombinedHrs}</span>
+                <span className="text-[10px] text-emerald-600/70 font-semibold">ชม.</span>
+              </div>
+            </div>
+
+            <div className="bg-purple-50/40 p-3.5 rounded-2xl border border-purple-100/40 shadow-sm space-y-1 col-span-2 md:col-span-1">
+              <span className="text-[10px] font-bold text-purple-400 uppercase flex items-center gap-1">
+                <Calendar className="w-3.5 h-3.5 text-purple-500" />
+                <span>วันลางานสะสม</span>
+              </span>
+              <div className="flex items-baseline gap-1">
+                <span className="text-xl font-extrabold text-purple-700 font-mono">{grandTotals.totalLeaveDays}</span>
+                <span className="text-[10px] text-purple-400 font-semibold">วัน</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {viewMode === "daily" ? (
+          /* Attendance Logs Table */
+          <div className="overflow-x-auto border border-gray-100 rounded-2xl">
+            <table className="w-full text-xs text-left">
+              <thead className="bg-gray-50/70 text-gray-500 font-bold border-b border-gray-100">
+                <tr>
+                  <th className="p-3.5">วันที่</th>
+                  <th className="p-3.5">รหัส / ชื่อพนักงาน</th>
+                  <th className="p-3.5">กะทำงาน</th>
+                  <th className="p-3.5 text-center">เวลาเข้างาน</th>
+                  <th className="p-3.5 text-center">เวลาออกงาน</th>
+                  <th className="p-3.5 text-center">ชั่วโมงทำงาน</th>
+                  <th className="p-3.5 text-center">ชั่วโมง OT</th>
+                  <th className="p-3.5 text-center">รวมชั่วโมง</th>
+                  <th className="p-3.5">สถานะ</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {filteredRecords.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="p-8 text-center text-gray-400 italic bg-gray-50/30">
+                      ไม่พบข้อมูลประวัติการลงเวลาในเดือนหรือเงื่อนไขที่เลือก
+                    </td>
+                  </tr>
+                ) : (
+                  filteredRecords.map((rec) => {
+                    const totalHrs = (rec.workHours || 0) + (rec.otHours || 0);
+                    const isLeave = rec.checkIn === "LEAVE" || rec.checkOut === "LEAVE";
+                    
+                    return (
+                      <tr key={rec.id} className="hover:bg-gray-50/50 transition-colors">
+                        <td className="p-3.5 font-medium text-gray-700 font-mono">
+                          {rec.date}
+                        </td>
+                        <td className="p-3.5">
+                          <div className="font-semibold text-gray-800">{rec.empName}</div>
+                          <div className="text-[10px] text-gray-400 font-mono">ID: {rec.empId}</div>
+                        </td>
+                        <td className="p-3.5">
+                          <span className={`inline-flex items-center gap-1 font-bold text-[10px] px-2 py-0.5 rounded-full ${
+                            rec.shift === "NIGHT"
+                              ? "bg-slate-900 text-amber-400 border border-slate-800"
+                              : "bg-amber-50 text-amber-800 border border-amber-200"
+                          }`}>
+                            {rec.shift === "NIGHT" ? "🌙 คืน (NIGHT)" : "☀ วัน (DAY)"}
+                          </span>
+                        </td>
+                        <td className="p-3.5 text-center font-bold font-mono">
+                          {isLeave ? (
+                            <span className="text-gray-400">LA</span>
+                          ) : (
+                            rec.checkIn || <span className="text-gray-300">-</span>
+                          )}
+                        </td>
+                        <td className="p-3.5 text-center font-bold font-mono">
+                          {isLeave ? (
+                            <span className="text-gray-400">LA</span>
+                          ) : (
+                            rec.checkOut || <span className="text-gray-300">-</span>
+                          )}
+                        </td>
+                        <td className="p-3.5 text-center font-semibold text-gray-600">
+                          {rec.workHours ?? 0} ชม.
+                        </td>
+                        <td className="p-3.5 text-center font-semibold text-red-600">
+                          {rec.otHours ?? 0} ชม.
+                        </td>
+                        <td className="p-3.5 text-center font-bold text-slate-800">
+                          {totalHrs} ชม.
+                        </td>
+                        <td className="p-3.5">
+                          {isLeave ? (
+                            <span className="inline-block text-[10px] font-bold text-purple-700 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded">
+                              ลางาน / ปรับหยุด
+                            </span>
+                          ) : rec.checkIn && rec.checkOut ? (
+                            <span className="inline-block text-[10px] font-bold text-green-700 bg-green-50 border border-green-200 px-2 py-0.5 rounded">
+                              เสร็จสมบูรณ์
+                            </span>
+                          ) : rec.checkIn ? (
+                            <span className="inline-block text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded animate-pulse">
+                              กำลังทำงาน...
+                            </span>
+                          ) : (
+                            <span className="inline-block text-[10px] font-bold text-gray-400 bg-gray-50 border border-gray-200 px-2 py-0.5 rounded">
+                              ยังไม่สแกน
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          /* Monthly Summary Table (For Managers) */
+          <div className="overflow-x-auto border border-gray-100 rounded-2xl">
+            <table className="w-full text-xs text-left">
+              <thead className="bg-gray-50/70 text-gray-500 font-bold border-b border-gray-100">
+                <tr>
+                  <th className="p-3.5">พนักงาน</th>
+                  <th className="p-3.5">แผนก</th>
+                  <th className="p-3.5 text-center">วันทำงานจริง</th>
+                  <th className="p-3.5 text-center">วันลางาน</th>
+                  <th className="p-3.5 text-center">ชั่วโมงปกติรวม</th>
+                  <th className="p-3.5 text-center">ชั่วโมง OT รวม</th>
+                  <th className="p-3.5 text-center bg-red-50/40 text-red-700 font-extrabold">ชั่วโมงรวมสะสม</th>
+                  <th className="p-3.5 text-center">เฉลี่ย ชม./วัน</th>
+                  <th className="p-3.5 min-w-[140px]">สัดส่วนชั่วโมง (เป้าหมาย 160 ชม.)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {filteredSummaries.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="p-8 text-center text-gray-400 italic bg-gray-50/30">
+                      ไม่พบประวัติพนักงานภายใต้เงื่อนไขเดือนหรือชื่อที่เลือก
+                    </td>
+                  </tr>
+                ) : (
+                  filteredSummaries.map((sum) => {
+                    const avgHrs = sum.daysWorked > 0 ? (sum.totalHours / sum.daysWorked).toFixed(1) : "0.0";
+                    // Percent of 160 hours target
+                    const targetHrs = 160;
+                    const percent = Math.min(100, Math.round((sum.totalHours / targetHrs) * 100));
+
+                    return (
+                      <tr key={sum.empId} className="hover:bg-gray-50/50 transition-colors">
+                        <td className="p-3.5">
+                          <div className="font-bold text-gray-900">{sum.empName}</div>
+                          <div className="text-[10px] text-gray-400 font-mono">ID: {sum.empId}</div>
+                        </td>
+                        <td className="p-3.5">
+                          <span className="px-2 py-0.5 rounded-md bg-gray-100 text-gray-600 font-medium text-[10px]">
+                            {sum.department}
+                          </span>
+                        </td>
+                        <td className="p-3.5 text-center font-bold text-slate-700 font-mono">
+                          {sum.daysWorked} <span className="text-[10px] text-gray-400 font-normal">วัน</span>
+                        </td>
+                        <td className="p-3.5 text-center font-bold text-purple-700 font-mono">
+                          {sum.daysLeave} <span className="text-[10px] text-purple-300 font-normal">วัน</span>
+                        </td>
+                        <td className="p-3.5 text-center font-semibold text-gray-600 font-mono">
+                          {sum.totalWorkHours} ชม.
+                        </td>
+                        <td className="p-3.5 text-center font-bold text-red-600 font-mono">
+                          {sum.totalOtHours} ชม.
+                        </td>
+                        <td className="p-3.5 text-center font-extrabold text-slate-800 bg-red-50/10 font-mono">
+                          {sum.totalHours} ชม.
+                        </td>
+                        <td className="p-3.5 text-center font-bold text-emerald-700 font-mono">
+                          {avgHrs} <span className="text-[9px] text-emerald-500 font-medium">ชม./วัน</span>
+                        </td>
+                        <td className="p-3.5">
+                          <div className="space-y-1 max-w-[150px]">
+                            <div className="flex justify-between items-center text-[9px] font-bold text-gray-500 font-mono">
+                              <span>{percent}%</span>
+                              <span>{sum.totalHours}/{targetHrs} ชม.</span>
+                            </div>
+                            <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
+                              <div 
+                                className={`h-full rounded-full transition-all duration-500 ${
+                                  percent >= 100 
+                                    ? "bg-emerald-500" 
+                                    : percent >= 75 
+                                      ? "bg-red-500" 
+                                      : percent >= 40 
+                                        ? "bg-amber-500" 
+                                        : "bg-gray-400"
+                                }`}
+                                style={{ width: `${percent}%` }}
+                              />
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* QR Scanner Guide Modal */}
