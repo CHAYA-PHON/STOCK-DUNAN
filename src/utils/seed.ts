@@ -72,7 +72,7 @@ export async function seedDatabaseIfEmpty() {
     });
 
     // 2. Seed Locations
-    const locations = ["CTC-01", "CTC-02", "CTC-03", "WIP-01", "WIP-02", "FG-01", "FG-02"];
+    const locations = ["ลานโอน-00", "CTC-01", "CTC-02", "CTC-03", "WIP-01", "WIP-02", "FG-01", "FG-02"];
     locations.forEach((loc) => {
       const ref = doc(db, "locations", loc);
       batch.set(ref, { name: loc, created: new Date() });

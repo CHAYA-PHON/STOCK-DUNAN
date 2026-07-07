@@ -40,6 +40,8 @@ import {
   Trash2,
 } from "lucide-react";
 
+const appIcon = new URL("./assets/images/app_icon_1783389098658.jpg", import.meta.url).href;
+
 export default function App() {
   // Windows 7 / Old Browser Compatibility Mode State
   const [win7Mode, setWin7Mode] = useState<boolean>(() => {
@@ -840,7 +842,7 @@ export default function App() {
       <header className="md:hidden bg-[#111] text-white h-16 shrink-0 flex justify-between items-center px-4 border-b border-white/10 print:hidden sticky top-0 z-50">
         <div className="flex items-center gap-2">
           <img
-            src="/src/assets/images/app_icon_1783389098658.jpg"
+            src={appIcon}
             alt="WSM-DUNAN App Icon"
             referrerPolicy="no-referrer"
             className="w-7 h-7 rounded object-cover border border-white/10"
@@ -953,7 +955,7 @@ export default function App() {
           <div className="flex items-center justify-between gap-2 px-1">
             <div className="flex items-center gap-2.5">
               <img
-                src="/src/assets/images/app_icon_1783389098658.jpg"
+                src={appIcon}
                 alt="WSM-DUNAN App Icon"
                 referrerPolicy="no-referrer"
                 className="w-8 h-8 rounded-lg object-cover border border-white/10 shadow-md shadow-red-600/10"

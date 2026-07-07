@@ -472,7 +472,8 @@ export default function StockOutView({ currentUser, onAddToSyncQueue }: StockOut
                   className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-red-500 bg-white"
                 />
                 <datalist id="locations-out-datalist">
-                  {locations.map((loc) => (
+                  <option value="ลานโอน-00">ลานโอน-00</option>
+                  {locations.filter(loc => loc.name !== "ลานโอน-00").map((loc) => (
                     <option key={loc.id} value={loc.name}>
                       {loc.name}
                     </option>
