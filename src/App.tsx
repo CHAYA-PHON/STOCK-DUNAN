@@ -38,6 +38,8 @@ import {
   RefreshCw,
   ChevronDown,
   Trash2,
+  ChevronLeft,
+  Menu,
 } from "lucide-react";
 
 const appIcon = new URL("./assets/images/app_icon_1783389098658.jpg", import.meta.url).href;
@@ -73,6 +75,7 @@ export default function App() {
 
   // Active Screen Navigation
   const [activeTab, setActiveTab] = useState<string>("dashboard");
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
 
   // Notifications State
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
@@ -966,294 +969,403 @@ export default function App() {
       </div>
 
       {/* Left Sidebar on Desktop */}
-      <aside className="w-66 bg-[#111] shrink-0 border-r border-white/5 flex flex-col justify-between p-5 text-slate-400 print:hidden overflow-y-auto hidden md:flex">
+      <aside className={`bg-[#111] text-slate-400 shrink-0 border-r border-white/5 flex flex-col justify-between print:hidden overflow-y-auto hidden md:flex transition-all duration-300 ${
+        isSidebarCollapsed ? "w-20 p-3" : "w-66 p-5"
+      }`}>
         <div className="space-y-6">
-          <div className="flex items-center justify-between gap-2 px-1">
+          <div className={`flex items-center justify-between gap-2 px-1 ${isSidebarCollapsed ? "flex-col gap-4" : ""}`}>
             <div className="flex items-center gap-2.5">
               <img
                 src={appIcon}
                 alt="WSM-DUNAN App Icon"
                 referrerPolicy="no-referrer"
-                className="w-8 h-8 rounded-lg object-cover border border-white/10 shadow-md shadow-red-600/10"
+                className="w-8 h-8 rounded-lg object-cover border border-white/10 shadow-md shadow-red-600/10 shrink-0"
               />
-              <h1 className="text-white font-bold text-lg tracking-tight">WSM-DUNAN</h1>
+              {!isSidebarCollapsed && (
+                <h1 className="text-white font-bold text-lg tracking-tight">WSM-DUNAN</h1>
+              )}
             </div>
 
-            <div className="flex items-center gap-1.5 relative">
+            <div className={`flex items-center gap-1.5 ${isSidebarCollapsed ? "flex-col" : "relative"}`}>
               {/* Local Sync Queue Widget */}
-              <div className="relative inline-flex items-center bg-[#1e1e1e] border border-white/10 rounded-lg text-white">
+              {!isSidebarCollapsed ? (
+                <div className="relative inline-flex items-center bg-[#1e1e1e] border border-white/10 rounded-lg text-white">
+                  <button
+                    onClick={triggerSync}
+                    className="relative p-1.5 hover:bg-white/5 rounded-l-lg flex items-center justify-center transition border-r border-white/10 cursor-pointer"
+                    title="ซิงค์ข้อมูลกับฐานข้อมูล Cloud ทันที"
+                    disabled={isSyncingAll}
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isSyncingAll ? "animate-spin text-amber-500" : "text-white"}`} />
+                    {syncQueue.length > 0 && (
+                      <span className="absolute -top-1.5 -left-1.5 min-w-[18px] h-4.5 px-1 bg-amber-500 text-[9px] font-black text-white rounded-full flex items-center justify-center border border-[#111] animate-pulse">
+                        {syncQueue.length}
+                      </span>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => setShowSyncDropdown(!showSyncDropdown)}
+                    className="p-1 hover:bg-white/5 rounded-r-lg flex items-center justify-center transition cursor-pointer"
+                    title="ดูรายการคิวรอโหลดข้อมูล"
+                  >
+                    <ChevronDown className="w-3 h-3 text-slate-400" />
+                  </button>
+
+                  {/* Desktop Sync Queue Dropdown */}
+                  {showSyncDropdown && (
+                    <div className="absolute top-10 right-0 w-72 bg-white rounded-xl shadow-2xl border border-gray-200 z-50 text-slate-800 p-3.5 animate-fade-in text-xs font-sans">
+                      <div className="flex justify-between items-center pb-2 border-b border-gray-100 mb-2">
+                        <h3 className="font-bold text-gray-700">รายการรออัปโหลด ({syncQueue.length})</h3>
+                        {syncQueue.length > 0 && (
+                          <button
+                            onClick={triggerSync}
+                            disabled={isSyncingAll}
+                            className="bg-red-600 hover:bg-red-700 text-white font-bold py-1 px-2 rounded text-[10px] disabled:opacity-50 cursor-pointer"
+                          >
+                            {isSyncingAll ? "กำลังซิงค์..." : "ซิงค์ทันที"}
+                          </button>
+                        )}
+                      </div>
+
+                      {syncQueue.length === 0 ? (
+                        <div className="py-4 text-center text-gray-400 font-medium">
+                          ไม่มีรายการค้างในระบบคิว
+                        </div>
+                      ) : (
+                        <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
+                          {syncQueue.map((item) => (
+                            <div key={item.id} className="p-2 rounded bg-gray-50 border border-gray-150 flex flex-col gap-1">
+                              <div className="flex justify-between items-start">
+                                <span className={`px-1 text-[8px] font-extrabold uppercase rounded ${
+                                  item.type === "in" ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"
+                                }`}>
+                                  {item.type === "in" ? "รับเข้า" : "โอนออก"}
+                                </span>
+                                <span className="font-mono text-gray-400 text-[9px]">{new Date(item.timestamp).toLocaleTimeString()}</span>
+                              </div>
+                              <div className="font-bold text-gray-800 text-[10px] truncate">
+                                {item.partNo} / {item.customer}
+                              </div>
+                              <div className="text-[9px] text-gray-500 flex justify-between items-center">
+                                <span>จำนวน: <strong className="text-gray-700">{item.qty} Pcs</strong></span>
+                                <span>Label: <strong className="text-gray-700 font-mono">{item.labelId || "-"}</strong></span>
+                              </div>
+
+                              <div className="flex justify-between items-center mt-1 pt-1.5 border-t border-gray-100 text-[9px]">
+                                <div className="flex items-center gap-1">
+                                  {item.status === "syncing" && (
+                                    <span className="text-amber-600 font-bold animate-pulse">กำลังโหลด...</span>
+                                  )}
+                                  {item.status === "failed" && (
+                                    <span className="text-red-600 font-bold max-w-[120px] truncate" title={item.errorMessage}>⚠️ ซ้ำ/ข้อผิดพลาด</span>
+                                  )}
+                                  {item.status === "pending" && (
+                                    <span className="text-gray-400">⏳ รอดำเนินการ</span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  {item.status === "failed" && (
+                                    <button
+                                      onClick={() => {
+                                        const updated = syncQueue.map(i => i.id === item.id ? { ...i, status: "pending" as const } : i);
+                                        setSyncQueue(updated);
+                                        saveSyncQueue(updated);
+                                      }}
+                                      className="text-blue-600 hover:text-blue-800 font-bold cursor-pointer"
+                                    >
+                                      ลองใหม่
+                                    </button>
+                                  )}
+                                  <button
+                                    onClick={() => {
+                                      const updated = syncQueue.filter(i => i.id !== item.id);
+                                      setSyncQueue(updated);
+                                      saveSyncQueue(updated);
+                                    }}
+                                    className="text-gray-400 hover:text-red-600 cursor-pointer"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : (
                 <button
                   onClick={triggerSync}
-                  className="relative p-1.5 hover:bg-white/5 rounded-l-lg flex items-center justify-center transition border-r border-white/10 cursor-pointer"
-                  title="ซิงค์ข้อมูลกับฐานข้อมูล Cloud ทันที"
-                  disabled={isSyncingAll}
+                  className="relative p-2 bg-slate-800 border border-white/5 rounded-lg text-slate-300 hover:text-white hover:bg-white/5 flex items-center justify-center cursor-pointer transition shrink-0"
+                  title={`คิวซิงค์ออฟไลน์ (${syncQueue.length} รายการ)`}
                 >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncingAll ? "animate-spin text-amber-500" : "text-white"}`} />
+                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncingAll ? "animate-spin text-amber-500" : ""}`} />
                   {syncQueue.length > 0 && (
-                    <span className="absolute -top-1.5 -left-1.5 min-w-[18px] h-4.5 px-1 bg-amber-500 text-[9px] font-black text-white rounded-full flex items-center justify-center border border-[#111] animate-pulse">
+                    <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-amber-500 text-[8px] font-black text-white rounded-full flex items-center justify-center border border-[#111]">
                       {syncQueue.length}
                     </span>
                   )}
                 </button>
-                <button
-                  onClick={() => setShowSyncDropdown(!showSyncDropdown)}
-                  className="p-1 hover:bg-white/5 rounded-r-lg flex items-center justify-center transition cursor-pointer"
-                  title="ดูรายการคิวรอโหลดข้อมูล"
-                >
-                  <ChevronDown className="w-3 h-3 text-slate-400" />
-                </button>
-
-                {/* Desktop Sync Queue Dropdown */}
-                {showSyncDropdown && (
-                  <div className="absolute top-10 right-0 w-72 bg-white rounded-xl shadow-2xl border border-gray-200 z-50 text-slate-800 p-3.5 animate-fade-in text-xs font-sans">
-                    <div className="flex justify-between items-center pb-2 border-b border-gray-100 mb-2">
-                      <h3 className="font-bold text-gray-700">รายการรออัปโหลด ({syncQueue.length})</h3>
-                      {syncQueue.length > 0 && (
-                        <button
-                          onClick={triggerSync}
-                          disabled={isSyncingAll}
-                          className="bg-red-600 hover:bg-red-700 text-white font-bold py-1 px-2 rounded text-[10px] disabled:opacity-50 cursor-pointer"
-                        >
-                          {isSyncingAll ? "กำลังซิงค์..." : "ซิงค์ทันที"}
-                        </button>
-                      )}
-                    </div>
-
-                    {syncQueue.length === 0 ? (
-                      <div className="py-4 text-center text-gray-400 font-medium">
-                        ไม่มีรายการค้างในระบบคิว
-                      </div>
-                    ) : (
-                      <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
-                        {syncQueue.map((item) => (
-                          <div key={item.id} className="p-2 rounded bg-gray-50 border border-gray-150 flex flex-col gap-1">
-                            <div className="flex justify-between items-start">
-                              <span className={`px-1 text-[8px] font-extrabold uppercase rounded ${
-                                item.type === "in" ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"
-                              }`}>
-                                {item.type === "in" ? "รับเข้า" : "โอนออก"}
-                              </span>
-                              <span className="font-mono text-gray-400 text-[9px]">{new Date(item.timestamp).toLocaleTimeString()}</span>
-                            </div>
-                            <div className="font-bold text-gray-800 text-[10px] truncate">
-                              {item.partNo} / {item.customer}
-                            </div>
-                            <div className="text-[9px] text-gray-500 flex justify-between items-center">
-                              <span>จำนวน: <strong className="text-gray-700">{item.qty} Pcs</strong></span>
-                              <span>Label: <strong className="text-gray-700 font-mono">{item.labelId || "-"}</strong></span>
-                            </div>
-
-                            <div className="flex justify-between items-center mt-1 pt-1.5 border-t border-gray-100 text-[9px]">
-                              <div className="flex items-center gap-1">
-                                {item.status === "syncing" && (
-                                  <span className="text-amber-600 font-bold animate-pulse">กำลังโหลด...</span>
-                                )}
-                                {item.status === "failed" && (
-                                  <span className="text-red-600 font-bold max-w-[120px] truncate" title={item.errorMessage}>⚠️ ซ้ำ/ข้อผิดพลาด</span>
-                                )}
-                                {item.status === "pending" && (
-                                  <span className="text-gray-400">⏳ รอดำเนินการ</span>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-1.5">
-                                {item.status === "failed" && (
-                                  <button
-                                    onClick={() => {
-                                      const updated = syncQueue.map(i => i.id === item.id ? { ...i, status: "pending" as const } : i);
-                                      setSyncQueue(updated);
-                                      saveSyncQueue(updated);
-                                    }}
-                                    className="text-blue-600 hover:text-blue-800 font-bold cursor-pointer"
-                                  >
-                                    ลองใหม่
-                                  </button>
-                                )}
-                                <button
-                                  onClick={() => {
-                                    const updated = syncQueue.filter(i => i.id !== item.id);
-                                    setSyncQueue(updated);
-                                    saveSyncQueue(updated);
-                                  }}
-                                  className="text-gray-400 hover:text-red-600 cursor-pointer"
-                                >
-                                  <Trash2 className="w-3 h-3" />
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
+              )}
 
               {/* Desktop Bell Notification */}
+              {!isSidebarCollapsed ? (
+                <button
+                  onClick={() => setShowNotifications(true)}
+                  className="relative p-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-xl transition cursor-pointer"
+                  title="การแจ้งเตือน"
+                >
+                  <Bell className="w-4.5 h-4.5" />
+                  {notifications.filter((n) => !n.read).length > 0 && (
+                    <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 text-[9px] font-bold text-white rounded-full flex items-center justify-center animate-pulse">
+                      {notifications.filter((n) => !n.read).length}
+                    </span>
+                  )}
+                </button>
+              ) : (
+                <button
+                  onClick={() => setShowNotifications(true)}
+                  className="relative p-2 bg-slate-800 border border-white/5 rounded-lg text-slate-300 hover:text-white hover:bg-white/5 flex items-center justify-center cursor-pointer transition shrink-0"
+                  title="การแจ้งเตือน"
+                >
+                  <Bell className="w-3.5 h-3.5" />
+                  {notifications.filter((n) => !n.read).length > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-red-600 rounded-full animate-pulse" />
+                  )}
+                </button>
+              )}
+
+              {/* Collapse/Expand Toggle Button */}
               <button
-                onClick={() => setShowNotifications(true)}
-                className="relative p-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-xl transition cursor-pointer"
-                title="การแจ้งเตือน"
+                onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+                className="p-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition cursor-pointer flex items-center justify-center shrink-0"
+                title={isSidebarCollapsed ? "ขยายแถบเมนูด้านข้าง" : "พับซ่อนแถบเมนูด้านข้าง"}
               >
-                <Bell className="w-4.5 h-4.5" />
-                {notifications.filter((n) => !n.read).length > 0 && (
-                  <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 text-[9px] font-bold text-white rounded-full flex items-center justify-center animate-pulse">
-                    {notifications.filter((n) => !n.read).length}
-                  </span>
+                {isSidebarCollapsed ? (
+                  <Menu className="w-4 h-4 text-slate-300" />
+                ) : (
+                  <ChevronLeft className="w-4 h-4 text-slate-400" />
                 )}
               </button>
             </div>
           </div>
 
           <div className="space-y-1.5">
-            <span className="text-[10px] font-bold tracking-wider text-slate-500 uppercase px-3 block mb-2">เมนูการทำรายการ</span>
+            {!isSidebarCollapsed ? (
+              <span className="text-[10px] font-bold tracking-wider text-slate-500 uppercase px-3 block mb-2">เมนูการทำรายการ</span>
+            ) : (
+              <div className="border-t border-white/5 my-2" />
+            )}
 
             <button
               onClick={() => setActiveTab("dashboard")}
-              className={`w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2.5 transition ${
+              className={`w-full text-left rounded-xl text-xs font-bold flex items-center transition ${
+                isSidebarCollapsed ? "justify-center p-2.5" : "px-3.5 py-2.5 gap-2.5"
+              } ${
                 activeTab === "dashboard" ? "bg-red-600 text-white shadow-lg shadow-red-600/15" : "hover:bg-white/5 hover:text-white"
               }`}
+              title="แดชบอร์ด"
             >
               <LayoutDashboard className="w-4 h-4 shrink-0" />
-              <span>แดชบอร์ด</span>
+              {!isSidebarCollapsed && <span>แดชบอร์ด</span>}
             </button>
 
             <button
               onClick={() => setActiveTab("stock_in")}
-              className={`w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2.5 transition ${
+              className={`w-full text-left rounded-xl text-xs font-bold flex items-center transition ${
+                isSidebarCollapsed ? "justify-center p-2.5" : "px-3.5 py-2.5 gap-2.5"
+              } ${
                 activeTab === "stock_in" ? "bg-red-600 text-white shadow-lg shadow-red-600/15" : "hover:bg-white/5 hover:text-white"
               }`}
+              title="รับเข้า"
             >
               <ArrowDownLeft className="w-4 h-4 shrink-0" />
-              <span>รับเข้า</span>
+              {!isSidebarCollapsed && <span>รับเข้า</span>}
             </button>
 
             <button
               onClick={() => setActiveTab("stock_out")}
-              className={`w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2.5 transition ${
+              className={`w-full text-left rounded-xl text-xs font-bold flex items-center transition ${
+                isSidebarCollapsed ? "justify-center p-2.5" : "px-3.5 py-2.5 gap-2.5"
+              } ${
                 activeTab === "stock_out" ? "bg-red-600 text-white shadow-lg shadow-red-600/15" : "hover:bg-white/5 hover:text-white"
               }`}
+              title="โอนออก"
             >
               <ArrowUpRight className="w-4 h-4 shrink-0" />
-              <span>โอนออก</span>
+              {!isSidebarCollapsed && <span>โอนออก</span>}
             </button>
 
             <button
               onClick={() => setActiveTab("reports_print")}
-              className={`w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2.5 transition ${
+              className={`w-full text-left rounded-xl text-xs font-bold flex items-center transition ${
+                isSidebarCollapsed ? "justify-center p-2.5" : "px-3.5 py-2.5 gap-2.5"
+              } ${
                 activeTab === "reports_print" ? "bg-red-600 text-white shadow-lg shadow-red-600/15" : "hover:bg-white/5 hover:text-white"
               }`}
+              title="รายงาน/เอกสาร"
             >
               <Printer className="w-4 h-4 shrink-0" />
-              <span>รายงาน/เอกสาร</span>
+              {!isSidebarCollapsed && <span>รายงาน/เอกสาร</span>}
             </button>
 
             <button
               onClick={() => setActiveTab("deposit_withdraw")}
-              className={`w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2.5 transition ${
+              className={`w-full text-left rounded-xl text-xs font-bold flex items-center transition ${
+                isSidebarCollapsed ? "justify-center p-2.5" : "px-3.5 py-2.5 gap-2.5"
+              } ${
                 activeTab === "deposit_withdraw" ? "bg-red-600 text-white shadow-lg shadow-red-600/15" : "hover:bg-white/5 hover:text-white"
               }`}
+              title="ฝาก/เบิก"
             >
               <Database className="w-4 h-4 shrink-0" />
-              <span>ฝาก/เบิก</span>
+              {!isSidebarCollapsed && <span>ฝาก/เบิก</span>}
             </button>
 
             <button
               onClick={() => setActiveTab("stock_adjust")}
-              className={`w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2.5 transition ${
+              className={`w-full text-left rounded-xl text-xs font-bold flex items-center transition ${
+                isSidebarCollapsed ? "justify-center p-2.5" : "px-3.5 py-2.5 gap-2.5"
+              } ${
                 activeTab === "stock_adjust" ? "bg-red-600 text-white shadow-lg shadow-red-600/15" : "hover:bg-white/5 hover:text-white"
               }`}
+              title="ปรับยอด (ปรับสต๊อก)"
             >
               <Sliders className="w-4 h-4 shrink-0" />
-              <span>ปรับยอด (ปรับสต๊อก)</span>
+              {!isSidebarCollapsed && <span>ปรับยอด (ปรับสต๊อก)</span>}
             </button>
 
             <button
               onClick={() => setActiveTab("products_master")}
-              className={`w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2.5 transition ${
+              className={`w-full text-left rounded-xl text-xs font-bold flex items-center transition ${
+                isSidebarCollapsed ? "justify-center p-2.5" : "px-3.5 py-2.5 gap-2.5"
+              } ${
                 activeTab === "products_master" ? "bg-red-600 text-white shadow-lg shadow-red-600/15" : "hover:bg-white/5 hover:text-white"
               }`}
+              title="สินค้า"
             >
               <Package className="w-4 h-4 shrink-0" />
-              <span>สินค้า</span>
+              {!isSidebarCollapsed && <span>สินค้า</span>}
             </button>
 
             <div className="pt-3 pb-1 border-t border-white/5 my-2" />
 
-            <span className="text-[10px] font-bold tracking-wider text-slate-500 uppercase px-3 block mb-2">พนักงาน & ระบบ</span>
+            {!isSidebarCollapsed ? (
+              <span className="text-[10px] font-bold tracking-wider text-slate-500 uppercase px-3 block mb-2">พนักงาน & ระบบ</span>
+            ) : (
+              <div className="border-t border-white/5 my-2" />
+            )}
 
             <button
               onClick={() => setActiveTab("time_attendance")}
-              className={`w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2.5 transition ${
+              className={`w-full text-left rounded-xl text-xs font-bold flex items-center transition ${
+                isSidebarCollapsed ? "justify-center p-2.5" : "px-3.5 py-2.5 gap-2.5"
+              } ${
                 activeTab === "time_attendance" ? "bg-red-600 text-white shadow-lg shadow-red-600/15" : "hover:bg-white/5 hover:text-white"
               }`}
+              title="เช็คอิน & จัดกะพนักงาน"
             >
               <CalendarCheck2 className="w-4 h-4 shrink-0" />
-              <span>เช็คอิน & จัดกะพนักงาน</span>
+              {!isSidebarCollapsed && <span>เช็คอิน & จัดกะพนักงาน</span>}
             </button>
 
             <button
               onClick={() => setActiveTab("employees_permissions")}
-              className={`w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2.5 transition ${
+              className={`w-full text-left rounded-xl text-xs font-bold flex items-center transition ${
+                isSidebarCollapsed ? "justify-center p-2.5" : "px-3.5 py-2.5 gap-2.5"
+              } ${
                 activeTab === "employees_permissions" ? "bg-red-600 text-white shadow-lg shadow-red-600/15" : "hover:bg-white/5 hover:text-white"
               }`}
+              title="จัดการรายชื่อและสิทธิ์"
             >
               <Users className="w-4 h-4 shrink-0" />
-              <span>จัดการรายชื่อและสิทธิ์</span>
+              {!isSidebarCollapsed && <span>จัดการรายชื่อและสิทธิ์</span>}
             </button>
 
             <button
               onClick={() => setActiveTab("settings")}
-              className={`w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2.5 transition ${
+              className={`w-full text-left rounded-xl text-xs font-bold flex items-center transition ${
+                isSidebarCollapsed ? "justify-center p-2.5" : "px-3.5 py-2.5 gap-2.5"
+              } ${
                 activeTab === "settings" ? "bg-red-600 text-white shadow-lg shadow-red-600/15" : "hover:bg-white/5 hover:text-white"
               }`}
+              title="ตั้งค่าระบบ"
             >
               <SettingsIcon className="w-4 h-4 shrink-0" />
-              <span>ตั้งค่าระบบ</span>
+              {!isSidebarCollapsed && <span>ตั้งค่าระบบ</span>}
             </button>
           </div>
         </div>
 
         <div className="space-y-4">
-          <div className="p-4 border border-white/5 bg-black/20 rounded-2xl">
-            <div className="flex items-center gap-3 mb-3">
-              <div className="w-10 h-10 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-xs font-bold text-white uppercase shadow-inner shrink-0">
+          {!isSidebarCollapsed ? (
+            <div className="p-4 border border-white/5 bg-black/20 rounded-2xl">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-xs font-bold text-white uppercase shadow-inner shrink-0">
+                  {currentUser.name.slice(0, 2)}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs text-white font-semibold truncate">{currentUser.name} {currentUser.lastName}</p>
+                  <p className="text-[9px] text-slate-500 uppercase tracking-widest truncate font-semibold">{currentUser.jobPosition || currentUser.role}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setWin7Mode(!win7Mode)}
+                className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl mb-2.5 text-xs font-bold transition cursor-pointer border ${
+                  win7Mode
+                    ? "bg-amber-600/20 text-amber-400 border-amber-500/40 hover:bg-amber-600/30"
+                    : "bg-white/5 border-white/10 hover:bg-white/10 text-slate-300"
+                }`}
+                title="โหมด Windows 7: เพิ่มความเข้ากันได้กับเบราว์เซอร์และ Windows รุ่นเก่า"
+              >
+                <div className="flex items-center gap-1.5">
+                  <Monitor className="w-3.5 h-3.5" />
+                  <span>โหมด Windows 7</span>
+                </div>
+                <span className={`text-[8px] px-1.5 py-0.5 rounded font-black ${win7Mode ? "bg-amber-500 text-black" : "bg-slate-800 text-slate-500"}`}>
+                  {win7Mode ? "เปิด" : "ปิด"}
+                </span>
+              </button>
+              <button
+                onClick={handleLogout}
+                className="w-full flex items-center justify-center gap-2 py-2 rounded-xl bg-white/5 hover:bg-red-950/20 hover:text-red-400 text-slate-400 font-semibold text-[11px] transition cursor-pointer"
+              >
+                <LogOut className="w-3.5 h-3.5 text-red-500" />
+                <span>ออกจากระบบ</span>
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-2.5 p-1">
+              <div className="w-10 h-10 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-xs font-bold text-white uppercase shadow-inner shrink-0" title={`${currentUser.name} ${currentUser.lastName}`}>
                 {currentUser.name.slice(0, 2)}
               </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-xs text-white font-semibold truncate">{currentUser.name} {currentUser.lastName}</p>
-                <p className="text-[9px] text-slate-500 uppercase tracking-widest truncate font-semibold">{currentUser.jobPosition || currentUser.role}</p>
-              </div>
-            </div>
-            <button
-              onClick={() => setWin7Mode(!win7Mode)}
-              className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl mb-2.5 text-xs font-bold transition cursor-pointer border ${
-                win7Mode
-                  ? "bg-amber-600/20 text-amber-400 border-amber-500/40 hover:bg-amber-600/30"
-                  : "bg-white/5 border-white/10 hover:bg-white/10 text-slate-300"
-              }`}
-              title="โหมด Windows 7: เพิ่มความเข้ากันได้กับเบราว์เซอร์และ Windows รุ่นเก่า"
-            >
-              <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setWin7Mode(!win7Mode)}
+                className={`p-2.5 rounded-xl transition cursor-pointer border ${
+                  win7Mode ? "bg-amber-600/20 text-amber-400 border-amber-500/40" : "bg-white/5 border-white/10 text-slate-300"
+                }`}
+                title={`โหมด Windows 7: ${win7Mode ? "เปิด" : "ปิด"}`}
+              >
                 <Monitor className="w-3.5 h-3.5" />
-                <span>โหมด Windows 7</span>
-              </div>
-              <span className={`text-[8px] px-1.5 py-0.5 rounded font-black ${win7Mode ? "bg-amber-500 text-black" : "bg-slate-800 text-slate-500"}`}>
-                {win7Mode ? "เปิด" : "ปิด"}
-              </span>
-            </button>
-            <button
-              onClick={handleLogout}
-              className="w-full flex items-center justify-center gap-2 py-2 rounded-xl bg-white/5 hover:bg-red-950/20 hover:text-red-400 text-slate-400 font-semibold text-[11px] transition cursor-pointer"
-            >
-              <LogOut className="w-3.5 h-3.5 text-red-500" />
-              <span>ออกจากระบบ</span>
-            </button>
-          </div>
+              </button>
+              <button
+                onClick={handleLogout}
+                className="p-2.5 rounded-xl bg-white/5 hover:bg-red-950/20 text-slate-400 hover:text-red-400 transition cursor-pointer"
+                title="ออกจากระบบ"
+              >
+                <LogOut className="w-3.5 h-3.5 text-red-500" />
+              </button>
+            </div>
+          )}
 
-          <div className="text-[10px] text-slate-600 border-t border-white/5 pt-3 leading-normal px-1">
-            <p className="font-bold text-slate-500">{APP_TITLE}</p>
-            <p>เวอร์ชัน: {APP_VERSION}</p>
-          </div>
+          {!isSidebarCollapsed && (
+            <div className="text-[10px] text-slate-600 border-t border-white/5 pt-3 leading-normal px-1">
+              <p className="font-bold text-slate-500">{APP_TITLE}</p>
+              <p>เวอร์ชัน: {APP_VERSION}</p>
+            </div>
+          )}
         </div>
       </aside>
 
