@@ -50,6 +50,79 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
     };
   }, []);
 
+  const handleDownloadInstaller = () => {
+    const appUrl = window.location.origin;
+    const iconUrl = `${appUrl}/app_icon.jpg`;
+    
+    const batContent = `@echo off
+chcp 65001 > nul
+title WSM Attendance System Installer
+echo ===================================================
+echo     WSM Time Attendance - PC Shortcut Installer
+echo ===================================================
+echo.
+echo กำลังติดตั้งไอคอนทางลัดสำหรับเปิดใช้งานบนเครื่อง PC...
+echo.
+
+set "AppName=WSM Attendance & Shift Manager"
+set "AppUrl=${appUrl}"
+set "IconUrl=${iconUrl}"
+set "TargetFolder=%USERPROFILE%\\WSM_Attendance"
+
+if not exist "%TargetFolder%" mkdir "%TargetFolder%"
+
+echo กำลังดาวน์โหลดไอคอนแอปพลิเคชัน...
+powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (New-Object System.Net.WebClient).DownloadFile('%IconUrl%', '%TargetFolder%\\app_icon.jpg')"
+
+:: Determine browser path
+set "BrowserPath="
+if exist "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" (
+    set "BrowserPath=C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+) else if exist "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe" (
+    set "BrowserPath=C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe"
+) else if exist "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe" (
+    set "BrowserPath=C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"
+)
+
+if "%BrowserPath%"=="" (
+    echo [คำเตือน] ไม่พบ Google Chrome หรือ Microsoft Edge ในตำแหน่งปกติ
+    echo จะทำการสร้างทางลัดเปิดด้วยเบราว์เซอร์เริ่มต้นแทน...
+    set "BrowserPath=explorer.exe"
+    set "Args=%AppUrl%"
+) else (
+    set "Args=--app=%AppUrl%"
+)
+
+echo กำลังสร้างไอคอนทางลัดบนหน้าจอ Desktop...
+set "ShortcutPath=%USERPROFILE%\\Desktop\\ระบบบันทึกเวลา WSM.lnk"
+
+powershell -Command "$WshShell = New-Object -ComObject WScript.Shell; $Shortcut = $WshShell.CreateShortcut('%ShortcutPath%'); $Shortcut.TargetPath = '%BrowserPath%'; $Shortcut.Arguments = '%Args%'; $Shortcut.IconLocation = '%TargetFolder%\\app_icon.jpg'; $Shortcut.WorkingDirectory = '%TargetFolder%'; $Shortcut.Description = '%AppName%'; $Shortcut.Save()"
+
+echo.
+echo ===================================================
+echo  ติดตั้งเรียบร้อยแล้ว! (Installation Completed)
+echo  กรุณาตรวจสอบไอคอน "ระบบบันทึกเวลา WSM" บนหน้าจอ Desktop ของท่าน
+echo ===================================================
+echo.
+pause
+`;
+
+    const blob = new Blob([batContent], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "Install_WSM_Attendance.bat";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleInstallClick = () => {
+    handleDownloadInstaller();
+    setShowInstallModal(true);
+  };
+
   // PIN update states
   const [oldPin, setOldPin] = useState("");
   const [newPin, setNewPin] = useState("");
@@ -522,7 +595,7 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
         {isPC && (
           <button
             type="button"
-            onClick={() => setShowInstallModal(true)}
+            onClick={handleInstallClick}
             className="flex items-center gap-1.5 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 text-white px-3 py-1.5 rounded-xl text-xs font-bold shadow-sm hover:shadow transition-all hover:scale-[1.02] cursor-pointer select-none active:scale-[0.98]"
             title="ติดตั้งแอปพลิเคชันลงบนเครื่อง PC"
           >
@@ -1171,7 +1244,7 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
                           <span>กดเพื่อติดตั้งลงเครื่องทันที (Install Now)</span>
                         </button>
                       ) : (
-                        <div className="bg-slate-50 border border-slate-100 rounded-xl p-3.5 space-y-2">
+                        <div className="bg-slate-50 border border-slate-100 rounded-xl p-3.5 space-y-3">
                           <div className="flex gap-2 items-start text-gray-600">
                             <Info className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
                             <div className="space-y-1">
@@ -1180,6 +1253,18 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
                                 สังเกตปุ่ม **ติดตั้งแอป** หรือไอคอนรูปคอมพิวเตอร์ที่มีเครื่องหมายบวก <strong className="text-red-600">⊕</strong> หรือไอคอนดาวน์โหลด ตรงมุมขวาบนในแถบป้อนที่อยู่เว็บ (URL Bar) ของบราวเซอร์ท่าน จากนั้นคลิกติดตั้งเพื่อสร้างไอคอนไอคอนทางลัดไว้บนหน้าจอเดสก์ท็อปคอมพิวเตอร์ของคุณ
                               </span>
                             </div>
+                          </div>
+
+                          <div className="pt-2 border-t border-slate-200/60 flex flex-col gap-2">
+                            <span className="text-[10px] text-gray-500 font-semibold">หรือใช้ตัวช่วยติดตั้งอัตโนมัติ (ดาวน์โหลดไฟล์ติดตั้ง):</span>
+                            <button
+                              type="button"
+                              onClick={handleDownloadInstaller}
+                              className="flex items-center justify-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white font-bold px-3.5 py-2 rounded-xl text-[10.5px] transition cursor-pointer self-start shadow-sm"
+                            >
+                              <Download className="w-3.5 h-3.5 text-red-500 animate-pulse" />
+                              <span>ดาวน์โหลดตัวติดตั้งด่วนสำหรับ Windows (.bat)</span>
+                            </button>
                           </div>
                         </div>
                       )}

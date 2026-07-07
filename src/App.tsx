@@ -949,6 +949,22 @@ export default function App() {
         </div>
       </header>
 
+      {/* Mobile Scrollable Tabs Navigation (Fixed at Top, outside the scrollable main panel) */}
+      <div className="md:hidden bg-slate-100 px-4 pt-3 pb-2 border-b border-slate-200/40 print:hidden shrink-0">
+        <div className="flex gap-1 bg-black p-2 rounded-2xl text-[11px] font-bold text-slate-300 shadow-lg overflow-x-auto whitespace-nowrap scrollbar-none">
+          <button onClick={() => setActiveTab("dashboard")} className={`px-2.5 py-1.5 rounded-lg shrink-0 transition-colors ${activeTab === "dashboard" ? "bg-red-600 text-white" : "hover:bg-white/5"}`}>แดชบอร์ด</button>
+          <button onClick={() => setActiveTab("stock_in")} className={`px-2.5 py-1.5 rounded-lg shrink-0 transition-colors ${activeTab === "stock_in" ? "bg-red-600 text-white" : "hover:bg-white/5"}`}>รับเข้า</button>
+          <button onClick={() => setActiveTab("stock_out")} className={`px-2.5 py-1.5 rounded-lg shrink-0 transition-colors ${activeTab === "stock_out" ? "bg-red-600 text-white" : "hover:bg-white/5"}`}>โอนออก</button>
+          <button onClick={() => setActiveTab("reports_print")} className={`px-2.5 py-1.5 rounded-lg shrink-0 transition-colors ${activeTab === "reports_print" ? "bg-red-600 text-white" : "hover:bg-white/5"}`}>รายงาน/เอกสาร</button>
+          <button onClick={() => setActiveTab("deposit_withdraw")} className={`px-2.5 py-1.5 rounded-lg shrink-0 transition-colors ${activeTab === "deposit_withdraw" ? "bg-red-600 text-white" : "hover:bg-white/5"}`}>ฝาก/เบิก</button>
+          <button onClick={() => setActiveTab("stock_adjust")} className={`px-2.5 py-1.5 rounded-lg shrink-0 transition-colors ${activeTab === "stock_adjust" ? "bg-red-600 text-white" : "hover:bg-white/5"}`}>ปรับยอด</button>
+          <button onClick={() => setActiveTab("products_master")} className={`px-2.5 py-1.5 rounded-lg shrink-0 transition-colors ${activeTab === "products_master" ? "bg-red-600 text-white" : "hover:bg-white/5"}`}>สินค้า/พาร์ท</button>
+          <button onClick={() => setActiveTab("time_attendance")} className={`px-2.5 py-1.5 rounded-lg shrink-0 transition-colors ${activeTab === "time_attendance" ? "bg-red-600 text-white" : "hover:bg-white/5"}`}>กะ/เช็คอิน</button>
+          <button onClick={() => setActiveTab("employees_permissions")} className={`px-2.5 py-1.5 rounded-lg shrink-0 transition-colors ${activeTab === "employees_permissions" ? "bg-red-600 text-white" : "hover:bg-white/5"}`}>จัดการรายชื่อ</button>
+          <button onClick={() => setActiveTab("settings")} className={`px-2.5 py-1.5 rounded-lg shrink-0 transition-colors ${activeTab === "settings" ? "bg-red-600 text-white" : "hover:bg-white/5"}`}>ตั้งค่า</button>
+        </div>
+      </div>
+
       {/* Left Sidebar on Desktop */}
       <aside className="w-66 bg-[#111] shrink-0 border-r border-white/5 flex flex-col justify-between p-5 text-slate-400 print:hidden overflow-y-auto hidden md:flex">
         <div className="space-y-6">
@@ -1243,19 +1259,6 @@ export default function App() {
 
       {/* Dynamic Content Panel */}
       <main className="flex-1 overflow-y-auto p-4 md:p-8 flex flex-col h-full">
-        {/* Mobile Scrollable Tabs Navigation */}
-        <div className="md:hidden flex gap-1 bg-black p-2 rounded-2xl mb-4 text-[11px] font-bold text-slate-300 print:hidden shadow-lg overflow-x-auto whitespace-nowrap scrollbar-none">
-          <button onClick={() => setActiveTab("dashboard")} className={`px-2.5 py-1.5 rounded-lg shrink-0 transition-colors ${activeTab === "dashboard" ? "bg-red-600 text-white" : "hover:bg-white/5"}`}>แดชบอร์ด</button>
-          <button onClick={() => setActiveTab("stock_in")} className={`px-2.5 py-1.5 rounded-lg shrink-0 transition-colors ${activeTab === "stock_in" ? "bg-red-600 text-white" : "hover:bg-white/5"}`}>รับเข้า</button>
-          <button onClick={() => setActiveTab("stock_out")} className={`px-2.5 py-1.5 rounded-lg shrink-0 transition-colors ${activeTab === "stock_out" ? "bg-red-600 text-white" : "hover:bg-white/5"}`}>โอนออก</button>
-          <button onClick={() => setActiveTab("reports_print")} className={`px-2.5 py-1.5 rounded-lg shrink-0 transition-colors ${activeTab === "reports_print" ? "bg-red-600 text-white" : "hover:bg-white/5"}`}>รายงาน/เอกสาร</button>
-          <button onClick={() => setActiveTab("deposit_withdraw")} className={`px-2.5 py-1.5 rounded-lg shrink-0 transition-colors ${activeTab === "deposit_withdraw" ? "bg-red-600 text-white" : "hover:bg-white/5"}`}>ฝาก/เบิก</button>
-          <button onClick={() => setActiveTab("stock_adjust")} className={`px-2.5 py-1.5 rounded-lg shrink-0 transition-colors ${activeTab === "stock_adjust" ? "bg-red-600 text-white" : "hover:bg-white/5"}`}>ปรับยอด</button>
-          <button onClick={() => setActiveTab("products_master")} className={`px-2.5 py-1.5 rounded-lg shrink-0 transition-colors ${activeTab === "products_master" ? "bg-red-600 text-white" : "hover:bg-white/5"}`}>สินค้า/พาร์ท</button>
-          <button onClick={() => setActiveTab("time_attendance")} className={`px-2.5 py-1.5 rounded-lg shrink-0 transition-colors ${activeTab === "time_attendance" ? "bg-red-600 text-white" : "hover:bg-white/5"}`}>กะ/เช็คอิน</button>
-          <button onClick={() => setActiveTab("employees_permissions")} className={`px-2.5 py-1.5 rounded-lg shrink-0 transition-colors ${activeTab === "employees_permissions" ? "bg-red-600 text-white" : "hover:bg-white/5"}`}>จัดการรายชื่อ</button>
-          <button onClick={() => setActiveTab("settings")} className={`px-2.5 py-1.5 rounded-lg shrink-0 transition-colors ${activeTab === "settings" ? "bg-red-600 text-white" : "hover:bg-white/5"}`}>ตั้งค่า</button>
-        </div>
 
         {currentUser?.approved === false && (
           <div className="bg-gradient-to-r from-amber-500 to-amber-600 text-white px-5 py-4 rounded-2xl mb-6 shadow-md border border-amber-400/20">
