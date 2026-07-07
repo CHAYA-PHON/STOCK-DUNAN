@@ -5,6 +5,24 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>WSM-DUNAN CENTER</title>
     <link rel="icon" type="image/jpeg" href="/src/assets/images/app_icon_1783389098658.jpg" />
+    <link rel="manifest" href="./manifest.json" />
+    <script>
+      // Register service worker for installable PWA
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('./sw.js').catch((err) => {
+            console.error('Service Worker registration failed:', err);
+          });
+        });
+      }
+
+      // Capture beforeinstallprompt event
+      window.addEventListener('beforeinstallprompt', (e) => {
+        e.preventDefault();
+        window.deferredPrompt = e;
+        window.dispatchEvent(new CustomEvent('pwa-prompt-available', { detail: e }));
+      });
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -1,0 +1,17 @@
+{
+  "name": "WSM Time Attendance and Shift Manager",
+  "short_name": "WSM Attendance",
+  "description": "ระบบบันทึกเวลาทำงานและจัดการกะพนักงาน",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#dc2626",
+  "icons": [
+    {
+      "src": "./app_icon.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg",
+      "purpose": "any maskable"
+    }
+  ]
+}

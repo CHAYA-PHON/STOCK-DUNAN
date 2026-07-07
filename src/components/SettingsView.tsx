@@ -6,7 +6,7 @@ import { Employee, APP_VERSION } from "../types";
 import { 
   Settings, Shield, Plus, Key, Layers, Compass, HelpCircle, User, 
   Phone, Image, Calendar, History, UploadCloud, Loader2, CloudLightning, CheckCircle2,
-  Trash2, Edit, ArrowRight
+  Trash2, Edit, ArrowRight, Monitor, Download, Laptop, X, Info
 } from "lucide-react";
 
 interface SettingsViewProps {
@@ -24,6 +24,32 @@ interface LocationBatch {
 }
 
 export default function SettingsView({ currentUser }: SettingsViewProps) {
+  // Install to PC states
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [isPC, setIsPC] = useState(false);
+  const [showInstallModal, setShowInstallModal] = useState(false);
+  const [installSuccess, setInstallSuccess] = useState(false);
+
+  useEffect(() => {
+    // Detect if user is on PC / Mac (Non-Mobile)
+    const pcCheck = !/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    setIsPC(pcCheck);
+
+    // Grab cached prompt if available
+    if ((window as any).deferredPrompt) {
+      setDeferredPrompt((window as any).deferredPrompt);
+    }
+
+    const handlePrompt = (e: any) => {
+      setDeferredPrompt(e.detail || e);
+    };
+
+    window.addEventListener("pwa-prompt-available", handlePrompt);
+    return () => {
+      window.removeEventListener("pwa-prompt-available", handlePrompt);
+    };
+  }, []);
+
   // PIN update states
   const [oldPin, setOldPin] = useState("");
   const [newPin, setNewPin] = useState("");
@@ -488,11 +514,22 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center border-b border-gray-100 pb-5">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-gray-100 pb-5 gap-4">
         <div>
           <h2 className="text-2xl font-bold tracking-tight text-gray-900">ตั้งค่าระบบ (Settings)</h2>
           <p className="text-sm text-gray-500 mt-1">แก้ไขข้อมูลส่วนตัว และสร้างพิกัดอัตโนมัติ</p>
         </div>
+        {isPC && (
+          <button
+            type="button"
+            onClick={() => setShowInstallModal(true)}
+            className="flex items-center gap-1.5 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 text-white px-3 py-1.5 rounded-xl text-xs font-bold shadow-sm hover:shadow transition-all hover:scale-[1.02] cursor-pointer select-none active:scale-[0.98]"
+            title="ติดตั้งแอปพลิเคชันลงบนเครื่อง PC"
+          >
+            <Laptop className="w-3.5 h-3.5" />
+            <span>ติดตั้งลง PC</span>
+          </button>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -1051,6 +1088,151 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* PC Installation Guide Modal */}
+      {showInstallModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 transition-opacity">
+          <div className="bg-white w-full max-w-lg rounded-2xl shadow-xl overflow-hidden border border-slate-100 flex flex-col max-h-[90vh]">
+            {/* Modal Header */}
+            <div className="bg-gradient-to-r from-red-600 to-rose-600 text-white p-5 flex justify-between items-center shrink-0">
+              <div className="flex items-center gap-2">
+                <Laptop className="w-5 h-5" />
+                <div>
+                  <h3 className="font-bold text-sm">ติดตั้งโปรแกรมลง PC (Desktop Installation)</h3>
+                  <p className="text-[10px] text-red-100 mt-0.5">ติดตั้งเพื่อเปิดหน้าบันทึกเวลาทำงานได้ทันทีจากหน้าจอคอมพิวเตอร์</p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setShowInstallModal(false);
+                  setInstallSuccess(false);
+                }}
+                className="text-white/80 hover:text-white p-1 rounded-lg hover:bg-white/10 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-6 overflow-y-auto space-y-5 text-gray-700 text-xs leading-relaxed">
+              {installSuccess ? (
+                <div className="text-center py-6 space-y-3">
+                  <div className="w-12 h-12 bg-green-50 text-green-600 rounded-full flex items-center justify-center mx-auto border border-green-100">
+                    <CheckCircle2 className="w-6 h-6" />
+                  </div>
+                  <h4 className="font-bold text-gray-800 text-sm">การส่งคำขอติดตั้งสำเร็จ!</h4>
+                  <p className="text-gray-500 max-w-xs mx-auto">
+                    โปรแกรมจะทำการเปิดและเพิ่มไอคอนทางลัดไว้บนหน้าจอเดสก์ท็อป (Desktop) ของคุณเรียบร้อยแล้ว
+                  </p>
+                  <button
+                    onClick={() => {
+                      setShowInstallModal(false);
+                      setInstallSuccess(false);
+                    }}
+                    className="mt-4 px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition cursor-pointer"
+                  >
+                    ปิดหน้าต่าง
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {/* Method 1: Browser PWA Install */}
+                  <div className="space-y-2.5">
+                    <h4 className="font-bold text-gray-800 flex items-center gap-1.5">
+                      <span className="w-5 h-5 bg-red-50 text-red-600 rounded-full flex items-center justify-center font-bold text-[10px]">1</span>
+                      <span>ติดตั้งแบบแอปเว็บด่วน (PWA App Install)</span>
+                    </h4>
+                    <p className="text-gray-500 pl-6">
+                      ติดตั้งได้ทันทีโดยไม่ต้องดาวน์โหลดไฟล์เพิ่ม ประสิทธิภาพสูง อัปเดตอัตโนมัติ และประหยัดพื้นที่เครื่อง
+                    </p>
+
+                    <div className="pl-6 pt-1">
+                      {deferredPrompt ? (
+                        <button
+                          onClick={async () => {
+                            if (!deferredPrompt) return;
+                            try {
+                              deferredPrompt.prompt();
+                              const { outcome } = await deferredPrompt.userChoice;
+                              if (outcome === 'accepted') {
+                                setInstallSuccess(true);
+                                setDeferredPrompt(null);
+                              }
+                            } catch (err) {
+                              console.error("Installation prompt failed:", err);
+                            }
+                          }}
+                          className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white font-bold px-4 py-2.5 rounded-xl transition shadow-sm cursor-pointer"
+                        >
+                          <Download className="w-4 h-4" />
+                          <span>กดเพื่อติดตั้งลงเครื่องทันที (Install Now)</span>
+                        </button>
+                      ) : (
+                        <div className="bg-slate-50 border border-slate-100 rounded-xl p-3.5 space-y-2">
+                          <div className="flex gap-2 items-start text-gray-600">
+                            <Info className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+                            <div className="space-y-1">
+                              <span className="font-bold block text-gray-800">แนะนำวิธีติดตั้งด้วยตนเอง (Manual Install)</span>
+                              <span className="block text-gray-500 leading-normal">
+                                สังเกตปุ่ม **ติดตั้งแอป** หรือไอคอนรูปคอมพิวเตอร์ที่มีเครื่องหมายบวก <strong className="text-red-600">⊕</strong> หรือไอคอนดาวน์โหลด ตรงมุมขวาบนในแถบป้อนที่อยู่เว็บ (URL Bar) ของบราวเซอร์ท่าน จากนั้นคลิกติดตั้งเพื่อสร้างไอคอนไอคอนทางลัดไว้บนหน้าจอเดสก์ท็อปคอมพิวเตอร์ของคุณ
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <hr className="border-gray-100" />
+
+                  {/* Method 2: Standalone Desktop Installer */}
+                  <div className="space-y-2.5">
+                    <h4 className="font-bold text-gray-800 flex items-center gap-1.5">
+                      <span className="w-5 h-5 bg-slate-100 text-slate-600 rounded-full flex items-center justify-center font-bold text-[10px]">2</span>
+                      <span>ติดตั้งเป็นโปรแกรมเดสก์ท็อปแยก (Desktop App Build)</span>
+                    </h4>
+                    <p className="text-gray-500 pl-6">
+                      หากคุณต้องการแอปที่ตัดหน้าเว็บอื่นๆ ออก และรันเสมือนโปรแกรมทำงานเฉพาะทาง (Standalone Application) สามารถให้แอดมินหรือไอทีบิวด์ตัวติดตั้งได้ผ่านคำสั่งเหล่านี้:
+                    </p>
+
+                    <div className="pl-6 space-y-2">
+                      <div className="bg-slate-900 text-slate-100 rounded-xl p-3 font-mono text-[10px] space-y-1 select-all relative group">
+                        <span className="text-slate-500 block"># คำสั่งบิวด์ตัวติดตั้ง PC (.exe) ในเครื่องพัฒนา</span>
+                        <span className="block">npm run desktop:build</span>
+                      </div>
+                      
+                      <div className="text-gray-500 leading-normal space-y-1 bg-slate-50 border border-slate-100 rounded-xl p-3">
+                        <div className="flex gap-1.5 items-center font-bold text-gray-700 text-[11px] mb-1">
+                          <Monitor className="w-3.5 h-3.5 text-slate-600" />
+                          <span>ข้อดีของการติดตั้งลง PC</span>
+                        </div>
+                        <ul className="list-disc pl-4 space-y-0.5 text-gray-500">
+                          <li>เปิดใช้งานได้ทันทีจากหน้าจอหลัก (Desktop) และแถบงาน (Taskbar)</li>
+                          <li>ไม่มีหน้าต่างเบราว์เซอร์หรือเมนูรบกวน เหมาะกับการตั้งเป็นเครื่องตอกบัตรกลาง</li>
+                          <li>ระบบรองรับการสแกนพิกัด GPS แผนที่ และทำงานออฟไลน์ได้ดียิ่งขึ้น</li>
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="bg-slate-50 px-6 py-4 flex justify-end border-t border-gray-100 shrink-0">
+              <button
+                onClick={() => {
+                  setShowInstallModal(false);
+                  setInstallSuccess(false);
+                }}
+                className="px-4 py-2 bg-white border border-gray-200 hover:bg-gray-50 text-gray-600 font-bold rounded-xl transition cursor-pointer text-xs"
+              >
+                ปิดหน้าต่าง
+              </button>
+            </div>
           </div>
         </div>
       )}
