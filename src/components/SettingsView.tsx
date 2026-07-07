@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { collection, doc, writeBatch, setDoc, onSnapshot, deleteDoc } from "firebase/firestore";
 import { db, auth } from "../firebase";
 import { signInWithPopup, GoogleAuthProvider } from "firebase/auth";
-import { Employee } from "../types";
+import { Employee, APP_VERSION } from "../types";
 import { 
   Settings, Shield, Plus, Key, Layers, Compass, HelpCircle, User, 
   Phone, Image, Calendar, History, UploadCloud, Loader2, CloudLightning, CheckCircle2,
@@ -970,7 +970,7 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-[11px] font-mono leading-relaxed">
           <div>
             <p className="text-gray-500">เวอร์ชันรหัสสินค้า:</p>
-            <p className="font-bold text-white mt-0.5">v2.6.0-Stable</p>
+            <p className="font-bold text-white mt-0.5">{APP_VERSION}</p>
           </div>
           <div>
             <p className="text-gray-500">อัปเดตล่าสุดเมื่อ:</p>

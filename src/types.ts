@@ -110,6 +110,10 @@ export interface TimeAttendance {
   shift: "DAY" | "NIGHT";
   workHours: number;
   otHours: number;
+  ot1?: number;
+  ot15?: number;
+  ot3?: number;
+  isHoliday?: boolean;
   requests?: AttendanceRequest[];
 }
 
@@ -147,3 +151,6 @@ export interface NotificationItem {
   type: "request" | "approval" | "system";
   linkTab?: string;
 }
+
+export const APP_VERSION = "v2.6.0 Stable Release";
+export const APP_TITLE = "WSM-DUNAN CENTER";

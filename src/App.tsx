@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { collection, onSnapshot, doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
 import { db } from "./firebase";
-import { Employee, NotificationItem } from "./types";
+import { Employee, NotificationItem, APP_VERSION, APP_TITLE } from "./types";
 import { seedDatabaseIfEmpty } from "./utils/seed";
 import { getSyncQueue, saveSyncQueue, addToSyncQueue, syncSingleItem, SyncItem } from "./utils/syncQueue";
 import {
@@ -1235,8 +1235,8 @@ export default function App() {
           </div>
 
           <div className="text-[10px] text-slate-600 border-t border-white/5 pt-3 leading-normal px-1">
-            <p className="font-bold text-slate-500">WSM-DUNAN CENTER</p>
-            <p>เวอร์ชัน: v2.6.0 Stable Release</p>
+            <p className="font-bold text-slate-500">{APP_TITLE}</p>
+            <p>เวอร์ชัน: {APP_VERSION}</p>
           </div>
         </div>
       </aside>

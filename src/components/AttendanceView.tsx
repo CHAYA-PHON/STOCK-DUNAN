@@ -3,7 +3,7 @@ import { collection, onSnapshot, doc, setDoc, updateDoc, getDoc } from "firebase
 import { db } from "../firebase";
 import { Employee, TimeAttendance, AttendanceRequest } from "../types";
 import { calculateAttendance } from "../utils/timeTracker";
-import { Clock, Calendar, CheckCircle2, UserCheck, AlertTriangle, Moon, Sun, ArrowRight, ClipboardList, ShieldAlert, HelpCircle, Info, Lightbulb, X, Camera, Search, Users, BarChart3 } from "lucide-react";
+import { Clock, Calendar, CheckCircle2, UserCheck, AlertTriangle, Moon, Sun, ArrowRight, ClipboardList, ShieldAlert, HelpCircle, Info, Lightbulb, X, Camera, Search, Users, BarChart3, Plus } from "lucide-react";
 
 interface AttendanceViewProps {
   currentUser: Employee | null;
@@ -40,12 +40,30 @@ export default function AttendanceView({ currentUser }: AttendanceViewProps) {
     rotationInterval: 7, // 7 or 14
   });
 
+  // Holiday Configuration States
+  const [weeklyHolidays, setWeeklyHolidays] = useState<number[]>([0]); // Default: Sunday (0)
+  const [customHolidays, setCustomHolidays] = useState<{ date: string; name: string }[]>([]);
+  const [newHolidayDate, setNewHolidayDate] = useState("");
+  const [newHolidayName, setNewHolidayName] = useState("");
+
   const isManager = currentUser?.role === "admin" || currentUser?.role === "leader";
   const todayStr = new Date().toISOString().split("T")[0];
 
-  // Load rotation settings
+  // Helper to check if a date string is holiday
+  const isDateHoliday = React.useCallback((dateStr: string) => {
+    if (!dateStr) return false;
+    const hasCustom = customHolidays.some((h) => h.date === dateStr);
+    if (hasCustom) return true;
+
+    const [year, month, day] = dateStr.split("-").map(Number);
+    const dateObj = new Date(year, month - 1, day);
+    const dayOfWeek = dateObj.getDay();
+    return weeklyHolidays.includes(dayOfWeek);
+  }, [weeklyHolidays, customHolidays]);
+
+  // Load rotation & holiday settings
   useEffect(() => {
-    const loadRotation = async () => {
+    const loadSettings = async () => {
       try {
         const snap = await getDoc(doc(db, "settings", "attendance_rotation"));
         if (snap.exists()) {
@@ -54,12 +72,18 @@ export default function AttendanceView({ currentUser }: AttendanceViewProps) {
             nextRotationDate: d.nextRotationDate || "",
             rotationInterval: Number(d.rotationInterval) || 7,
           });
+          if (Array.isArray(d.weeklyHolidays)) {
+            setWeeklyHolidays(d.weeklyHolidays);
+          }
+          if (Array.isArray(d.customHolidays)) {
+            setCustomHolidays(d.customHolidays);
+          }
         }
       } catch (err) {
-        console.error("Error loading rotation settings:", err);
+        console.error("Error loading settings:", err);
       }
     };
-    loadRotation();
+    loadSettings();
   }, []);
 
   // Update current time clock
@@ -133,15 +157,20 @@ export default function AttendanceView({ currentUser }: AttendanceViewProps) {
 
     // Calculate hours and OT hours using our custom formulas
     const checkInTime = myRecordToday.checkIn || "08:30";
-    const { workHours, otHours } = calculateAttendance(checkInTime, timeStr, myRecordToday.shift);
+    const isTodayHoliday = isDateHoliday(todayStr);
+    const { workHours, otHours, ot1, ot15, ot3 } = calculateAttendance(checkInTime, timeStr, myRecordToday.shift, isTodayHoliday);
 
     try {
       await updateDoc(doc(db, "time_attendance", myRecordToday.id), {
         checkOut: timeStr,
         workHours,
         otHours,
+        ot1,
+        ot15,
+        ot3,
+        isHoliday: isTodayHoliday,
       });
-      alert(`บันทึกเลิกงานและคำนวณชั่วโมงทำงานสำเร็จ:\nเวลาทำงาน: ${workHours} ชม.\nเวลา OT: ${otHours} ชม.`);
+      alert(`บันทึกเลิกงานและคำนวณชั่วโมงทำงานสำเร็จ:\nเวลาทำงาน: ${workHours} ชม.\nเวลา OT: ${otHours} ชม.${isTodayHoliday ? ` (วันหยุด: OT 1.0 = ${ot1} ชม. | OT 3.0 = ${ot3} ชม.)` : ` (OT 1.5 = ${ot15} ชม.)`}`);
     } catch (err) {
       console.error(err);
     }
@@ -254,12 +283,20 @@ export default function AttendanceView({ currentUser }: AttendanceViewProps) {
           }
 
           if (inTime && outTime) {
-            const { workHours, otHours } = calculateAttendance(inTime, outTime, data.shift);
+            const isTargetHoliday = isDateHoliday(data.date);
+            const { workHours, otHours, ot1, ot15, ot3 } = calculateAttendance(inTime, outTime, data.shift, isTargetHoliday);
             updates.workHours = workHours;
             updates.otHours = otHours;
+            updates.ot1 = ot1;
+            updates.ot15 = ot15;
+            updates.ot3 = ot3;
+            updates.isHoliday = isTargetHoliday;
           } else {
             updates.workHours = 0;
             updates.otHours = 0;
+            updates.ot1 = 0;
+            updates.ot15 = 0;
+            updates.ot3 = 0;
           }
         } else {
           // If leave: set workHours = 8 and otHours = 0 (paid leave)
@@ -415,6 +452,9 @@ export default function AttendanceView({ currentUser }: AttendanceViewProps) {
       let totalWorkHours = 0;
       let totalOtHours = 0;
       let daysLeave = 0;
+      let totalOt1 = 0;
+      let totalOt15 = 0;
+      let totalOt3 = 0;
 
       empRecords.forEach((rec) => {
         const isLeave = rec.checkIn === "LEAVE" || rec.checkOut === "LEAVE";
@@ -426,6 +466,29 @@ export default function AttendanceView({ currentUser }: AttendanceViewProps) {
           }
           totalWorkHours += rec.workHours || 0;
           totalOtHours += rec.otHours || 0;
+
+          // Differentiated OT calculations with backwards compatibility
+          let rOt1 = rec.ot1;
+          let rOt15 = rec.ot15;
+          let rOt3 = rec.ot3;
+
+          if (rOt1 === undefined || rOt15 === undefined || rOt3 === undefined) {
+            if (rec.checkIn && rec.checkOut) {
+              const isHolidayRec = rec.isHoliday !== undefined ? rec.isHoliday : isDateHoliday(rec.date);
+              const result = calculateAttendance(rec.checkIn, rec.checkOut, rec.shift, isHolidayRec);
+              rOt1 = result.ot1;
+              rOt15 = result.ot15;
+              rOt3 = result.ot3;
+            } else {
+              rOt1 = 0;
+              rOt15 = 0;
+              rOt3 = 0;
+            }
+          }
+
+          totalOt1 += rOt1 || 0;
+          totalOt15 += rOt15 || 0;
+          totalOt3 += rOt3 || 0;
         }
       });
 
@@ -438,6 +501,9 @@ export default function AttendanceView({ currentUser }: AttendanceViewProps) {
         daysLeave,
         totalWorkHours,
         totalOtHours,
+        totalOt1,
+        totalOt15,
+        totalOt3,
         totalHours: totalWorkHours + totalOtHours,
       };
     });
@@ -833,6 +899,147 @@ export default function AttendanceView({ currentUser }: AttendanceViewProps) {
                   </div>
                 </div>
 
+                {/* Holiday Configuration Panel */}
+                <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 sm:p-5 space-y-4">
+                  <h4 className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
+                    <Calendar className="w-4 h-4 text-red-600" />
+                    <span>ตั้งค่าวันทำงาน / วันหยุด และอัตราค่าล่วงเวลา (Holiday & OT Rate Configuration)</span>
+                  </h4>
+
+                  <div className="grid grid-cols-1 md:grid-cols-12 gap-5">
+                    {/* Left side: Weekly Holidays */}
+                    <div className="md:col-span-5 space-y-2.5">
+                      <label className="text-[11px] text-gray-500 font-semibold block">วันหยุดประจำสัปดาห์ (Weekly Holidays)</label>
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        {["อา.", "จ.", "อ.", "พ.", "พฤ.", "ศ.", "ส."].map((name, idx) => {
+                          const isSel = weeklyHolidays.includes(idx);
+                          return (
+                            <button
+                              key={idx}
+                              onClick={async () => {
+                                let updated;
+                                if (isSel) {
+                                  updated = weeklyHolidays.filter((d) => d !== idx);
+                                } else {
+                                  updated = [...weeklyHolidays, idx].sort();
+                                }
+                                setWeeklyHolidays(updated);
+                                try {
+                                  await setDoc(doc(db, "settings", "attendance_rotation"), {
+                                    weeklyHolidays: updated,
+                                  }, { merge: true });
+                                } catch (e) {
+                                  console.error(e);
+                                }
+                              }}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer select-none border ${
+                                isSel
+                                  ? "bg-red-600 border-red-600 text-white shadow-sm font-extrabold"
+                                  : "bg-white border-gray-200 text-gray-600 hover:bg-gray-100 font-semibold"
+                              }`}
+                            >
+                              {name}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <p className="text-[10px] text-gray-400 italic">
+                        * วันที่ถูกตั้งค่าเป็นวันหยุด: ทำงาน 8 ชั่วโมงแรกเป็น OT 1.0 และส่วนที่เกินเป็น OT 3.0
+                      </p>
+                      <p className="text-[10px] text-gray-400 italic">
+                        * วันทำงานปกติ: อัตราค่าล่วงเวลา (OT) จะคิดเป็น 1.5 เท่าตามปกติ
+                      </p>
+                    </div>
+
+                    {/* Right side: Custom Holidays */}
+                    <div className="md:col-span-7 space-y-3">
+                      <label className="text-[11px] text-gray-500 font-semibold block">วันหยุดนักขัตฤกษ์ / วันหยุดพิเศษ (Public & Special Holidays)</label>
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <input
+                          type="date"
+                          value={newHolidayDate}
+                          onChange={(e) => setNewHolidayDate(e.target.value)}
+                          className="flex-1 p-2 bg-white border border-gray-200 rounded-xl font-semibold outline-none focus:ring-1 focus:ring-red-500 text-xs"
+                        />
+                        <input
+                          type="text"
+                          placeholder="ชื่อวันหยุด (เช่น วันสงกรานต์)"
+                          value={newHolidayName}
+                          onChange={(e) => setNewHolidayName(e.target.value)}
+                          className="flex-1 p-2 bg-white border border-gray-200 rounded-xl outline-none focus:ring-1 focus:ring-red-500 text-xs font-semibold placeholder-gray-400"
+                        />
+                        <button
+                          onClick={async () => {
+                            if (!newHolidayDate || !newHolidayName.trim()) {
+                              alert("กรุณากรอกวันที่และชื่อวันหยุดให้ครบถ้วน");
+                              return;
+                            }
+                            const alreadyExists = customHolidays.some(h => h.date === newHolidayDate);
+                            if (alreadyExists) {
+                              alert("มีวันหยุดที่ตรงกับวันที่นี้ในระบบแล้ว");
+                              return;
+                            }
+                            const updated = [...customHolidays, { date: newHolidayDate, name: newHolidayName.trim() }]
+                              .sort((a, b) => a.date.localeCompare(b.date));
+                            try {
+                              await setDoc(doc(db, "settings", "attendance_rotation"), {
+                                customHolidays: updated,
+                              }, { merge: true });
+                              setCustomHolidays(updated);
+                              setNewHolidayDate("");
+                              setNewHolidayName("");
+                              alert(`เพิ่มวันหยุด "${newHolidayName.trim()}" ในวันที่ ${newHolidayDate} เรียบร้อย`);
+                            } catch (e) {
+                              console.error(e);
+                              alert("เกิดข้อผิดพลาดในการบันทึก");
+                            }
+                          }}
+                          className="bg-red-600 hover:bg-red-700 text-white font-bold px-4 py-2 rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1 shrink-0"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>เพิ่มวันหยุด</span>
+                        </button>
+                      </div>
+
+                      {/* List of Custom Holidays */}
+                      <div className="bg-white border border-gray-100 rounded-xl p-2.5 max-h-[140px] overflow-y-auto space-y-1.5">
+                        {customHolidays.length === 0 ? (
+                          <p className="text-[11px] text-gray-400 italic text-center py-4">ยังไม่มีวันหยุดพิเศษเพิ่มในระบบ</p>
+                        ) : (
+                          customHolidays.map((h) => (
+                            <div key={h.date} className="flex justify-between items-center bg-gray-50/50 px-2.5 py-1.5 rounded-lg border border-gray-100 text-xs">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono text-gray-600 bg-white border px-1.5 py-0.5 rounded text-[10px]">{h.date}</span>
+                                <span className="font-semibold text-gray-800">{h.name}</span>
+                              </div>
+                              <button
+                                onClick={async () => {
+                                  if (!confirm(`คุณต้องการลบวันหยุด "${h.name}" ออกจากระบบใช่หรือไม่?`)) return;
+                                  const updated = customHolidays.filter(item => item.date !== h.date);
+                                  try {
+                                    await setDoc(doc(db, "settings", "attendance_rotation"), {
+                                      customHolidays: updated,
+                                    }, { merge: true });
+                                    setCustomHolidays(updated);
+                                    alert("ลบวันหยุดเรียบร้อยแล้ว");
+                                  } catch (e) {
+                                    console.error(e);
+                                    alert("เกิดข้อผิดพลาดในการลบ");
+                                  }
+                                }}
+                                className="text-gray-400 hover:text-red-600 p-1 cursor-pointer transition rounded"
+                                title="ลบวันหยุด"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
                 <div className="overflow-x-auto border border-gray-100 rounded-2xl">
                   <table className="w-full text-xs text-left">
                     <thead className="bg-gray-50/70 text-gray-500 font-bold border-b border-gray-100">
@@ -1097,8 +1304,40 @@ export default function AttendanceView({ currentUser }: AttendanceViewProps) {
                         <td className="p-3.5 text-center font-semibold text-gray-600">
                           {rec.workHours ?? 0} ชม.
                         </td>
-                        <td className="p-3.5 text-center font-semibold text-red-600">
-                          {rec.otHours ?? 0} ชม.
+                        <td className="p-3.5 text-center text-red-600 font-mono">
+                          <div className="font-bold">{rec.otHours ?? 0} ชม.</div>
+                          {(rec.otHours ?? 0) > 0 && (() => {
+                            let rOt1 = rec.ot1;
+                            let rOt15 = rec.ot15;
+                            let rOt3 = rec.ot3;
+                            let rIsHoliday = rec.isHoliday;
+
+                            if (rOt1 === undefined || rOt15 === undefined || rOt3 === undefined) {
+                              if (rec.checkIn && rec.checkOut && !isLeave) {
+                                rIsHoliday = rec.isHoliday !== undefined ? rec.isHoliday : isDateHoliday(rec.date);
+                                const result = calculateAttendance(rec.checkIn, rec.checkOut, rec.shift, rIsHoliday);
+                                rOt1 = result.ot1;
+                                rOt15 = result.ot15;
+                                rOt3 = result.ot3;
+                              }
+                            }
+
+                            return (
+                              <div className="text-[9px] text-gray-400 font-sans mt-1 leading-normal space-y-0.5">
+                                {rIsHoliday ? (
+                                  <>
+                                    <span className="block text-red-700 bg-red-50 px-1.5 py-0.5 rounded border border-red-100 font-bold text-[8px] mb-1">วันหยุด</span>
+                                    {rOt1 > 0 && <span className="block font-medium">OT 1.0: {rOt1} ชม.</span>}
+                                    {rOt3 > 0 && <span className="block font-bold text-red-600">OT 3.0: {rOt3} ชม.</span>}
+                                  </>
+                                ) : (
+                                  <>
+                                    {rOt15 > 0 && <span className="block font-medium">OT 1.5: {rOt15} ชม.</span>}
+                                  </>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </td>
                         <td className="p-3.5 text-center font-bold text-slate-800">
                           {totalHrs} ชม.
@@ -1181,7 +1420,14 @@ export default function AttendanceView({ currentUser }: AttendanceViewProps) {
                           {sum.totalWorkHours} ชม.
                         </td>
                         <td className="p-3.5 text-center font-bold text-red-600 font-mono">
-                          {sum.totalOtHours} ชม.
+                          <div>{sum.totalOtHours} ชม.</div>
+                          {sum.totalOtHours > 0 && (
+                            <div className="text-[9px] text-gray-400 font-normal leading-normal font-sans mt-1 whitespace-nowrap space-y-1">
+                              {sum.totalOt1 > 0 && <div className="text-amber-800 bg-amber-50/70 border border-amber-100/50 rounded px-1.5 py-0.5">OT 1.0: {sum.totalOt1} ชม.</div>}
+                              {sum.totalOt15 > 0 && <div className="text-red-700 bg-red-50/30 border border-red-100/50 rounded px-1.5 py-0.5">OT 1.5: {sum.totalOt15} ชม.</div>}
+                              {sum.totalOt3 > 0 && <div className="text-purple-700 bg-purple-50/50 border border-purple-100/50 rounded px-1.5 py-0.5">OT 3.0: {sum.totalOt3} ชม.</div>}
+                            </div>
+                          )}
                         </td>
                         <td className="p-3.5 text-center font-extrabold text-slate-800 bg-red-50/10 font-mono">
                           {sum.totalHours} ชม.
