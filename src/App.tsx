@@ -837,7 +837,7 @@ export default function App() {
 
   // RENDER MAIN FULL-STACK SPA INTERFACE
   return (
-    <div className="min-h-screen bg-slate-100 flex flex-col md:flex-row font-sans text-slate-900 overflow-hidden">
+    <div className="h-screen h-[100dvh] w-screen bg-slate-100 flex flex-col md:flex-row font-sans text-slate-900 overflow-hidden">
       {/* Mobile top navbar */}
       <header className="md:hidden bg-[#111] text-white h-16 shrink-0 flex justify-between items-center px-4 border-b border-white/10 print:hidden sticky top-0 z-50">
         <div className="flex items-center gap-2">
