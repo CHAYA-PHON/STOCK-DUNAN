@@ -321,6 +321,24 @@ export default function App() {
     return () => unsubscribe();
   }, [currentUser?.id]);
 
+  // Sync central Google Sheets settings from Firestore to localStorage (Admin Central Database)
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, "settings", "general"), (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        if (data.googleSheetsUrl) {
+          localStorage.setItem("wsm_sheets_url", data.googleSheetsUrl);
+          if (data.googleSheetsId) {
+            localStorage.setItem("wsm_sheets_id", data.googleSheetsId);
+          }
+        }
+      }
+    }, (error: any) => {
+      console.warn("Error listening to central settings/general:", error);
+    });
+    return () => unsub();
+  }, []);
+
   // Toast trigger and synthesizer beep helper
   const triggerToast = (notif: NotificationItem) => {
     setToasts((prev) => [...prev, notif]);
@@ -1134,12 +1152,11 @@ export default function App() {
               {!isSidebarCollapsed ? (
                 <div className="relative inline-flex items-center bg-[#1e1e1e] border border-white/10 rounded-lg text-white">
                   <button
-                    onClick={triggerSync}
+                    onClick={() => window.location.reload()}
                     className="relative p-1.5 hover:bg-white/5 rounded-l-lg flex items-center justify-center transition border-r border-white/10 cursor-pointer"
-                    title="ซิงค์ข้อมูลกับฐานข้อมูล Cloud ทันที"
-                    disabled={isSyncingAll}
+                    title="รีบูทหน้าโปรแกรม"
                   >
-                    <RefreshCw className={`w-3.5 h-3.5 ${isSyncingAll ? "animate-spin text-amber-500" : "text-white"}`} />
+                    <RefreshCw className="w-3.5 h-3.5 text-white" />
                     {syncQueue.length > 0 && (
                       <span className="absolute -top-1.5 -left-1.5 min-w-[18px] h-4.5 px-1 bg-amber-500 text-[9px] font-black text-white rounded-full flex items-center justify-center border border-[#111] animate-pulse">
                         {syncQueue.length}
@@ -1240,11 +1257,11 @@ export default function App() {
                 </div>
               ) : (
                 <button
-                  onClick={triggerSync}
+                  onClick={() => window.location.reload()}
                   className="relative p-2 bg-slate-800 border border-white/5 rounded-lg text-slate-300 hover:text-white hover:bg-white/5 flex items-center justify-center cursor-pointer transition shrink-0"
-                  title={`คิวซิงค์ออฟไลน์ (${syncQueue.length} รายการ)`}
+                  title="รีบูทหน้าโปรแกรม"
                 >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncingAll ? "animate-spin text-amber-500" : ""}`} />
+                  <RefreshCw className="w-3.5 h-3.5 text-white" />
                   {syncQueue.length > 0 && (
                     <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-amber-500 text-[8px] font-black text-white rounded-full flex items-center justify-center border border-[#111]">
                       {syncQueue.length}

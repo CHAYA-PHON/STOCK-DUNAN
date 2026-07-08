@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { collection, getDocs, writeBatch, doc } from "firebase/firestore";
+import { collection, getDocs, writeBatch, doc, setDoc, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase";
 import { Product, Employee } from "../types";
 import { 
@@ -15,7 +15,8 @@ import {
 } from "../utils/googleSheets";
 import { 
   Database, RefreshCw, UploadCloud, DownloadCloud, AlertTriangle, CheckCircle2, 
-  LogOut, Play, ShieldCheck, FileText, Settings, HelpCircle, ArrowRight, TableProperties 
+  LogOut, Play, ShieldCheck, FileText, Settings, HelpCircle, ArrowRight, TableProperties,
+  Lock
 } from "lucide-react";
 
 interface GoogleSheetsViewProps {
@@ -37,6 +38,27 @@ export default function GoogleSheetsView({ currentUser }: GoogleSheetsViewProps)
   const [autoSyncEnabled, setAutoSyncEnabled] = useState<boolean>(() => {
     return localStorage.getItem("wsm_sheets_auto_sync") === "true";
   });
+
+  const isAuthorized = currentUser?.role === "admin" || currentUser?.role === "leader";
+
+  // Real-time synchronization of the central Google Sheet URL from Firestore (Admin Central Database)
+  useEffect(() => {
+    const unsubscribeGeneral = onSnapshot(doc(db, "settings", "general"), (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        if (data.googleSheetsUrl) {
+          setSheetUrl(data.googleSheetsUrl);
+          localStorage.setItem("wsm_sheets_url", data.googleSheetsUrl);
+          if (data.googleSheetsId) {
+            localStorage.setItem("wsm_sheets_id", data.googleSheetsId);
+          }
+        }
+      }
+    }, (error) => {
+      console.warn("Error listening to central settings/general in GoogleSheetsView:", error);
+    });
+    return () => unsubscribeGeneral();
+  }, []);
 
   // Track Auth state
   useEffect(() => {
@@ -101,17 +123,41 @@ export default function GoogleSheetsView({ currentUser }: GoogleSheetsViewProps)
     }
   };
 
-  const handleSaveUrl = () => {
+  const handleSaveUrl = async () => {
     const sId = extractSpreadsheetId(sheetUrl);
     if (!sId) {
       setStatusMessage({ text: "รูปแบบ Google Sheet URL ไม่ถูกต้อง", type: "error" });
       return;
     }
-    localStorage.setItem("wsm_sheets_url", sheetUrl);
-    localStorage.setItem("wsm_sheets_id", sId);
-    setStatusMessage({ text: "บันทึกและเชื่อมโยง Google Sheet URL สำเร็จ!", type: "success" });
-    if (accessToken) {
-      verifySpreadsheet(accessToken);
+
+    if (!isAuthorized) {
+      setStatusMessage({ text: "ขออภัย เฉพาะผู้ดูแลระบบ (Admin) หรือ หัวหน้างาน (Leader) เท่านั้นที่สามารถเปลี่ยน URL ของฐานข้อมูลกลางได้", type: "error" });
+      return;
+    }
+
+    setLoading(true);
+    setStatusMessage({ text: "กำลังบันทึกข้อมูลและเชื่อมโยงชีตเป็นฐานข้อมูลกลาง...", type: "info" });
+    
+    try {
+      // Save locally
+      localStorage.setItem("wsm_sheets_url", sheetUrl);
+      localStorage.setItem("wsm_sheets_id", sId);
+      
+      // Save globally in Firestore central database settings
+      await setDoc(doc(db, "settings", "general"), {
+        googleSheetsUrl: sheetUrl,
+        googleSheetsId: sId
+      }, { merge: true });
+      
+      setStatusMessage({ text: "บันทึกและเชื่อมโยง Google Sheet URL เป็นฐานข้อมูลกลางสําเร็จ!", type: "success" });
+      if (accessToken) {
+        verifySpreadsheet(accessToken);
+      }
+    } catch (err: any) {
+      console.error(err);
+      setStatusMessage({ text: `บันทึกข้อมูลไม่สำเร็จ: ${err.message || err}`, type: "error" });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -454,26 +500,50 @@ export default function GoogleSheetsView({ currentUser }: GoogleSheetsViewProps)
 
           {/* Step 2: Spreadsheet URL */}
           <div className="bg-white border border-slate-200/60 rounded-3xl p-6 shadow-sm space-y-4">
-            <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-900 text-[10px] text-white">2</span>
-              ตั้งค่า Google Sheet URL
-            </h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-900 text-[10px] text-white">2</span>
+                ตั้งค่าฐานข้อมูลกลาง
+              </h3>
+              <span className="text-[10px] bg-emerald-50 text-emerald-600 border border-emerald-200 font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider">
+                Admin Central Database
+              </span>
+            </div>
             
             <div className="space-y-3">
-              <label className="text-[11px] font-bold text-slate-500 block">Google Sheets URL หรือ ID ที่ต้องการลิงก์:</label>
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-bold text-slate-500 block">Google Sheets URL หรือ ID ของส่วนกลาง:</label>
+                {!isAuthorized && (
+                  <span className="text-[10px] text-slate-400 font-semibold flex items-center gap-1">
+                    <Lock className="w-3 h-3 text-slate-400" /> Read-Only
+                  </span>
+                )}
+              </div>
               <input
                 type="text"
                 value={sheetUrl}
                 onChange={(e) => setSheetUrl(e.target.value)}
                 placeholder="https://docs.google.com/spreadsheets/d/..."
-                className="w-full bg-slate-50 border border-slate-200 hover:border-slate-300 focus:border-slate-400 focus:bg-white rounded-xl py-2.5 px-3 text-xs text-slate-800 focus:outline-none font-mono"
+                disabled={!isAuthorized}
+                className={`w-full border rounded-xl py-2.5 px-3 text-xs focus:outline-none font-mono ${
+                  !isAuthorized 
+                    ? "bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed" 
+                    : "bg-slate-50 border-slate-200 hover:border-slate-300 focus:border-slate-400 focus:bg-white text-slate-800"
+                }`}
               />
-              <button
-                onClick={handleSaveUrl}
-                className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs py-2.5 px-3 rounded-xl cursor-pointer active:scale-[0.98] transition"
-              >
-                บันทึกและเชื่อมโยงชีตนี้
-              </button>
+              {isAuthorized ? (
+                <button
+                  onClick={handleSaveUrl}
+                  disabled={loading}
+                  className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs py-2.5 px-3 rounded-xl cursor-pointer active:scale-[0.98] transition disabled:opacity-50"
+                >
+                  {loading ? "กำลังบันทึก..." : "บันทึกและเชื่อมโยงเป็นชีตกลาง"}
+                </button>
+              ) : (
+                <div className="bg-slate-50 text-[10px] text-slate-500 border border-slate-200/50 p-3 rounded-xl leading-relaxed">
+                  🔒 คุณกำลังใช้ฐานข้อมูลกลางของ Admin (เฉพาะผู้ดูแลระบบและหัวหน้างานเท่านั้นที่มีสิทธิ์เปลี่ยน URL นี้ได้)
+                </div>
+              )}
             </div>
 
             {spreadsheetTitle && (

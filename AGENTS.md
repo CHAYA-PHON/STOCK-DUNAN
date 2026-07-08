@@ -18,5 +18,8 @@ Format definition:
 - Current Version after fixing Stock-In/Out Sync Issue (Aligned and corrected getSafeProductId mismatch in syncQueue.ts to ensure stock transactions update the master product database successfully): `v26.9.1`
 - Current Version after implementing self-healing reconciliation (Implemented dynamic background reconciliation on app startup to automatically audit and restore missing master stock quantities from previous mismatched transactions): `v26.9.2`
 - Current Version after integrating Google Sheets database synchronization (Implemented full Google Sheets sync subsystem, OAuth scope bindings, spreadsheet mapping, manual bulk export/import for products, and background real-time transaction auto-syncing): `v26.10.0`
+- Current Version after centralizing Google Sheets Database (Configured Google Sheets URL/ID as a central database stored globally in Firestore settings, enabling real-time sheet URL propagation to all users and read-only locks for non-admin roles): `v26.11.0`
+- Current Version after restricting attendance to store keepers (Filtered the shift scheduling, monthly summaries, and daily logs inside the check-in and shift system to display only user_store employees): `v26.11.1`
+- Current Version after adding reboot shortcut button (Configured sidebar refresh action to instantly reboot and reload the program page via window.location.reload): `v26.11.2`
 
 

@@ -96,7 +96,13 @@ export default function AttendanceView({ currentUser }: AttendanceViewProps) {
     // 1. Fetch employees
     const unsubEmps = onSnapshot(collection(db, "employees"), (snap) => {
       const list: Employee[] = [];
-      snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Employee));
+      snap.forEach((d) => {
+        const emp = { id: d.id, ...d.data() } as Employee;
+        // แสดงเฉพาะ user_store และตัวผู้ใช้งานที่เข้าระบบปัจจุบันเพื่อให้ตรวจสอบหรือแก้ไขตนเองได้
+        if (emp.role === "user_store" || emp.id === currentUser?.id) {
+          list.push(emp);
+        }
+      });
       setEmployees(list);
     });
 
@@ -400,19 +406,21 @@ export default function AttendanceView({ currentUser }: AttendanceViewProps) {
   };
 
   // List of pending requests for managers to review
-  const pendingRequests = attendances.flatMap((att) => {
-    const list = att.requests || [];
-    return list
-      .filter((r) => r.status === "pending")
-      .map((r) => ({
-        attendanceId: att.id,
-        empId: att.empId,
-        empName: att.empName,
-        date: att.date,
-        shift: att.shift,
-        ...r,
-      }));
-  });
+  const pendingRequests = attendances
+    .filter((att) => !isManager || employees.some((e) => e.id === att.empId))
+    .flatMap((att) => {
+      const list = att.requests || [];
+      return list
+        .filter((r) => r.status === "pending")
+        .map((r) => ({
+          attendanceId: att.id,
+          empId: att.empId,
+          empName: att.empName,
+          date: att.date,
+          shift: att.shift,
+          ...r,
+        }));
+    });
 
   // Filter logs according to role (Employee: only own, Manager: all with name & month filter)
   const filteredRecords = attendances
@@ -421,6 +429,10 @@ export default function AttendanceView({ currentUser }: AttendanceViewProps) {
       if (!isManager) {
         if (rec.empId !== currentUser?.id) return false;
       } else {
+        // แสดงเฉพาะพนักงานที่มีสิทธิ์ที่กรองแล้ว (user_store และผู้ใช้งานปัจจุบัน)
+        const isInFilteredList = employees.some((e) => e.id === rec.empId);
+        if (!isInFilteredList) return false;
+
         // Manager name filter
         if (nameFilter.trim()) {
           const query = nameFilter.toLowerCase();
