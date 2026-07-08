@@ -140,8 +140,13 @@ export async function seedDatabaseIfEmpty() {
 
     await batch.commit();
     console.log("Database seeded successfully with default values!");
-  } catch (err) {
-    console.error("Error seeding database:", err);
+  } catch (err: any) {
+    const errMsg = err?.message || String(err);
+    if (errMsg.includes("Quota") || errMsg.includes("quota") || err?.code === "resource-exhausted") {
+      console.warn("Error seeding database (Quota Exceeded):", err);
+    } else {
+      console.error("Error seeding database:", err);
+    }
     throw err;
   }
 }

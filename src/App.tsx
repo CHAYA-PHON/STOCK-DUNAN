@@ -310,9 +310,12 @@ export default function App() {
         localStorage.setItem("wsm_user_session", JSON.stringify(liveData));
       }
     }, (error: any) => {
-      console.error("onSnapshot profile sync error:", error);
-      if (error.message?.includes("Quota") || error.message?.includes("quota") || error.code === "resource-exhausted") {
+      const isQuota = error.message?.includes("Quota") || error.message?.includes("quota") || error.code === "resource-exhausted";
+      if (isQuota) {
+        console.warn("onSnapshot profile sync error (Quota Exceeded):", error);
         setQuotaError(true);
+      } else {
+        console.error("onSnapshot profile sync error:", error);
       }
     });
     return () => unsubscribe();
@@ -433,9 +436,12 @@ export default function App() {
       });
       isInitialAdjust = false;
     }, (error: any) => {
-      console.error("onSnapshot adjust_requests error:", error);
-      if (error.message?.includes("Quota") || error.message?.includes("quota") || error.code === "resource-exhausted") {
+      const isQuota = error.message?.includes("Quota") || error.message?.includes("quota") || error.code === "resource-exhausted";
+      if (isQuota) {
+        console.warn("onSnapshot adjust_requests error (Quota Exceeded):", error);
         setQuotaError(true);
+      } else {
+        console.error("onSnapshot adjust_requests error:", error);
       }
     });
 
@@ -519,9 +525,12 @@ export default function App() {
       });
       isInitialDep = false;
     }, (error: any) => {
-      console.error("onSnapshot deposits_withdrawals error:", error);
-      if (error.message?.includes("Quota") || error.message?.includes("quota") || error.code === "resource-exhausted") {
+      const isQuota = error.message?.includes("Quota") || error.message?.includes("quota") || error.code === "resource-exhausted";
+      if (isQuota) {
+        console.warn("onSnapshot deposits_withdrawals error (Quota Exceeded):", error);
         setQuotaError(true);
+      } else {
+        console.error("onSnapshot deposits_withdrawals error:", error);
       }
     });
 
