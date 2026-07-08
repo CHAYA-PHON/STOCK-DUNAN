@@ -3,7 +3,7 @@ import { collection, onSnapshot, doc, getDoc, setDoc, updateDoc } from "firebase
 import { db } from "./firebase";
 import { Employee, NotificationItem, APP_VERSION, APP_TITLE } from "./types";
 import { seedDatabaseIfEmpty } from "./utils/seed";
-import { getSyncQueue, saveSyncQueue, addToSyncQueue, syncSingleItem, SyncItem } from "./utils/syncQueue";
+import { getSyncQueue, saveSyncQueue, addToSyncQueue, syncSingleItem, SyncItem, reconcileProductMasterStocks } from "./utils/syncQueue";
 import {
   DashboardView,
   StockInView,
@@ -17,6 +17,7 @@ import {
   AttendanceView,
   LocationRelocationView,
   LocationInspectView,
+  GoogleSheetsView,
 } from "./components";
 import {
   LayoutDashboard,
@@ -27,6 +28,8 @@ import {
   Users,
   Sliders,
   Database,
+  Zap,
+  AlertTriangle,
   Printer,
   CalendarCheck2,
   Settings as SettingsIcon,
@@ -44,6 +47,7 @@ import {
   ChevronLeft,
   Menu,
   Layers,
+  TableProperties,
 } from "lucide-react";
 
 const appIcon = new URL("./assets/images/app_icon_1783389098658.jpg", import.meta.url).href;
@@ -76,6 +80,12 @@ export default function App() {
   // Session State
   const [currentUser, setCurrentUser] = useState<Employee | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Database Quota and Sandbox States
+  const [quotaError, setQuotaError] = useState<boolean>(false);
+  const [sandboxActive, setSandboxActive] = useState<boolean>(() => {
+    return typeof window !== "undefined" && localStorage.getItem("wsm_sandbox_mode") === "true";
+  });
 
   // Active Screen Navigation
   const [activeTab, setActiveTab] = useState<string>("dashboard");
@@ -238,8 +248,16 @@ export default function App() {
   // Run Seeder and resolve user sessions
   useEffect(() => {
     const initApp = async () => {
-      // 1. Seed database if empty
-      await seedDatabaseIfEmpty();
+      try {
+        // 1. Seed database if empty
+        await seedDatabaseIfEmpty();
+      } catch (err: any) {
+        console.warn("Could not seed database (client might be offline):", err);
+        const errMsg = err?.message || String(err);
+        if (errMsg.includes("Quota") || errMsg.includes("quota") || err?.code === "resource-exhausted") {
+          setQuotaError(true);
+        }
+      }
 
       // 2. Check localStorage session
       const savedSession = localStorage.getItem("wsm_user_session");
@@ -248,17 +266,32 @@ export default function App() {
           const parsed = JSON.parse(savedSession) as Employee;
           // Verify with DB to make sure user still active
           const docRef = doc(db, "employees", parsed.id);
-          const docSnap = await getDoc(docRef);
-          if (docSnap.exists()) {
-            const liveData = docSnap.data() as Employee;
-            if (liveData.status === "Active") {
-              setCurrentUser(liveData);
+          try {
+            const docSnap = await getDoc(docRef);
+            if (docSnap.exists()) {
+              const liveData = docSnap.data() as Employee;
+              if (liveData.status === "Active") {
+                setCurrentUser(liveData);
+              } else {
+                localStorage.removeItem("wsm_user_session");
+              }
             } else {
               localStorage.removeItem("wsm_user_session");
             }
+          } catch (fetchErr: any) {
+            const errMsg = fetchErr?.message || String(fetchErr);
+            console.warn("Could not verify session with server, falling back to local session:", errMsg);
+            // Fallback: If we are offline or server is unreachable, trust local storage so user can work offline
+            if (parsed.status === "Active") {
+              setCurrentUser(parsed);
+            }
           }
-        } catch (err) {
-          console.error(err);
+        } catch (err: any) {
+          console.warn("Parsing session failed or general session load error:", err);
+          const errMsg = err?.message || String(err);
+          if (errMsg.includes("Quota") || errMsg.includes("quota") || err?.code === "resource-exhausted") {
+            setQuotaError(true);
+          }
         }
       }
       setLoading(false);
@@ -275,6 +308,11 @@ export default function App() {
         const liveData = snapshot.data() as Employee;
         setCurrentUser(liveData);
         localStorage.setItem("wsm_user_session", JSON.stringify(liveData));
+      }
+    }, (error: any) => {
+      console.error("onSnapshot profile sync error:", error);
+      if (error.message?.includes("Quota") || error.message?.includes("quota") || error.code === "resource-exhausted") {
+        setQuotaError(true);
       }
     });
     return () => unsubscribe();
@@ -394,6 +432,11 @@ export default function App() {
         }
       });
       isInitialAdjust = false;
+    }, (error: any) => {
+      console.error("onSnapshot adjust_requests error:", error);
+      if (error.message?.includes("Quota") || error.message?.includes("quota") || error.code === "resource-exhausted") {
+        setQuotaError(true);
+      }
     });
 
     return () => {
@@ -475,6 +518,11 @@ export default function App() {
         }
       });
       isInitialDep = false;
+    }, (error: any) => {
+      console.error("onSnapshot deposits_withdrawals error:", error);
+      if (error.message?.includes("Quota") || error.message?.includes("quota") || error.code === "resource-exhausted") {
+        setQuotaError(true);
+      }
     });
 
     return () => {
@@ -565,6 +613,72 @@ export default function App() {
       <div className="min-h-screen bg-[#fafafa] flex flex-col items-center justify-center space-y-4">
         <div className="w-12 h-12 border-4 border-red-600 border-t-transparent rounded-full animate-spin"></div>
         <p className="text-sm font-semibold text-gray-500 tracking-wider">กำลังเชื่อมโยงฐานข้อมูลคลาวด์ WSM-DUNAN...</p>
+      </div>
+    );
+  }
+
+  if (quotaError && !sandboxActive) {
+    return (
+      <div className="min-h-screen bg-[#0f172a] flex flex-col items-center justify-center p-4 text-white font-sans relative overflow-hidden">
+        {/* Decorative Grid Lines */}
+        <div className="absolute inset-0 bg-[linear-gradient(to_right,#020617_1px,transparent_1px),linear-gradient(to_bottom,#020617_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_50%,#000_70%,transparent_100%)] opacity-30"></div>
+
+        <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-2xl space-y-6 text-center relative z-10 overflow-hidden">
+          {/* Subtle background glow */}
+          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-48 h-48 bg-amber-500/10 rounded-full blur-3xl pointer-events-none"></div>
+
+          <div className="mx-auto w-16 h-16 bg-amber-500/10 border border-amber-500/30 text-amber-500 rounded-2xl flex items-center justify-center animate-pulse">
+            <Database className="w-8 h-8 stroke-[1.5]" />
+          </div>
+
+          <div className="space-y-2">
+            <h2 className="text-xl font-black tracking-tight text-white flex items-center justify-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0" />
+              โควตาฐานข้อมูลฟรีสิ้นสุดแล้ว
+            </h2>
+            <p className="text-xs text-slate-400 font-medium">Firestore Daily Free Read Units Exceeded</p>
+          </div>
+
+          <div className="bg-slate-950/60 p-4.5 rounded-2xl border border-slate-800 text-left text-xs space-y-3">
+            <p className="text-slate-300 leading-relaxed font-normal">
+              เนื่องจากระบบบริหารคลังสินค้าเวอร์ชันสาธิตทำงานอยู่บนเซิร์ฟเวอร์ฟรีของ Google Firestore (มีโควตาอ่านข้อมูลจำกัดที่ 50,000 ครั้งต่อวัน) ขณะนี้โควตาดังกล่าวของวันนี้ได้สิ้นสุดลงแล้ว ระบบฐานข้อมูลคลาวด์จึงระงับการทำงานชั่วคราว
+            </p>
+            <div className="h-[1px] bg-slate-800 my-1"></div>
+            <p className="text-slate-400 leading-relaxed text-[11px]">
+              📌 <strong className="text-amber-400 font-bold">ท่านสามารถใช้งานแอปต่อได้ทันทีโดย:</strong>
+            </p>
+            <ul className="list-disc list-inside space-y-1.5 text-slate-300 text-[11px] pl-1">
+              <li>สลับเข้าใช้งาน <strong className="text-emerald-400 font-bold">โหมดทดลองออฟไลน์ (Offline Sandbox)</strong> ระบบจะจำลองฐานข้อมูลเก็บไว้บนอุปกรณ์ของคุณโดยตรง</li>
+              <li>หรือ รอการรีเซ็ตโควตาฟรีอัตโนมัติจาก Google ในรอบถัดไป</li>
+            </ul>
+          </div>
+
+          <div className="space-y-3 pt-2">
+            <button
+              onClick={() => {
+                localStorage.setItem("wsm_sandbox_mode", "true");
+                window.location.reload();
+              }}
+              className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs py-3.5 px-4 rounded-xl shadow-lg shadow-emerald-500/15 active:scale-[0.98] transition cursor-pointer flex items-center justify-center gap-2"
+            >
+              <Zap className="w-4 h-4 fill-white" />
+              <span>เปิดใช้งานโหมดทดลอง Offline Sandbox (แนะนำ)</span>
+            </button>
+
+            <button
+              onClick={() => {
+                window.location.reload();
+              }}
+              className="w-full bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs py-3 px-4 rounded-xl active:scale-[0.98] transition cursor-pointer"
+            >
+              ลองเชื่อมต่อฐานข้อมูลคลาวด์อีกครั้ง
+            </button>
+          </div>
+
+          <p className="text-[10px] text-slate-600 font-mono pt-2">
+            Database ID: ai-studio-1a43725f-fa38-4280-a2a5-3d39ba4eb2ab
+          </p>
+        </div>
       </div>
     );
   }
@@ -983,6 +1097,7 @@ export default function App() {
           <button onClick={() => setActiveTab("products_master")} className={`px-2.5 py-1.5 rounded-lg shrink-0 transition-colors ${activeTab === "products_master" ? "bg-red-600 text-white" : "hover:bg-white/5"}`}>สินค้า/พาร์ท</button>
           <button onClick={() => setActiveTab("time_attendance")} className={`px-2.5 py-1.5 rounded-lg shrink-0 transition-colors ${activeTab === "time_attendance" ? "bg-red-600 text-white" : "hover:bg-white/5"}`}>กะ/เช็คอิน</button>
           <button onClick={() => setActiveTab("employees_permissions")} className={`px-2.5 py-1.5 rounded-lg shrink-0 transition-colors ${activeTab === "employees_permissions" ? "bg-red-600 text-white" : "hover:bg-white/5"}`}>จัดการรายชื่อ</button>
+          <button onClick={() => setActiveTab("google_sheets")} className={`px-2.5 py-1.5 rounded-lg shrink-0 transition-colors text-emerald-400 ${activeTab === "google_sheets" ? "bg-emerald-600 text-white font-extrabold" : "hover:bg-white/5"}`}>Google Sheets</button>
           <button onClick={() => setActiveTab("settings")} className={`px-2.5 py-1.5 rounded-lg shrink-0 transition-colors ${activeTab === "settings" ? "bg-red-600 text-white" : "hover:bg-white/5"}`}>ตั้งค่า</button>
         </div>
       </div>
@@ -1328,6 +1443,19 @@ export default function App() {
               <Users className="w-4 h-4 shrink-0" />
               {!isSidebarCollapsed && <span>จัดการรายชื่อและสิทธิ์</span>}
             </button>
+            
+            <button
+              onClick={() => setActiveTab("google_sheets")}
+              className={`w-full text-left rounded-xl text-xs font-bold flex items-center transition ${
+                isSidebarCollapsed ? "justify-center p-2.5" : "px-3.5 py-2.5 gap-2.5"
+              } ${
+                activeTab === "google_sheets" ? "bg-red-600 text-white shadow-lg shadow-red-600/15" : "hover:bg-white/5 hover:text-white"
+              }`}
+              title="ระบบ Google Sheets"
+            >
+              <TableProperties className="w-4 h-4 shrink-0 text-emerald-500" />
+              {!isSidebarCollapsed && <span className="text-emerald-400">ระบบ Google Sheets</span>}
+            </button>
 
             <button
               onClick={() => setActiveTab("settings")}
@@ -1417,6 +1545,30 @@ export default function App() {
       {/* Dynamic Content Panel */}
       <main className="flex-1 overflow-y-auto p-4 md:p-8 flex flex-col h-full">
 
+        {sandboxActive && (
+          <div className="bg-gradient-to-r from-emerald-600 via-emerald-700 to-teal-800 text-white px-5 py-4.5 rounded-2xl mb-6 shadow-lg shadow-emerald-950/10 border border-emerald-500/30 flex flex-col md:flex-row md:items-center justify-between gap-4 animate-fade-in relative overflow-hidden shrink-0">
+            <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full blur-2xl pointer-events-none"></div>
+            <div className="space-y-1">
+              <p className="font-extrabold text-sm flex items-center gap-2">
+                <Zap className="w-4 h-4 fill-amber-300 text-amber-300 shrink-0" />
+                <span>เปิดใช้งานโหมดทดลองออฟไลน์ (Offline Sandbox Active)</span>
+              </p>
+              <p className="text-xs text-emerald-100 leading-normal">
+                ระบบจำลองฐานข้อมูลเสมือนถูกเปิดใช้งานเพื่อแก้ปัญหาโควตาเซิร์ฟเวอร์เต็ม ข้อมูลทั้งหมดจะจัดเก็บและทำงานในเว็บเบราว์เซอร์ของท่านทันที รวดเร็ว และไม่มีสิทธิ์ถูกบล็อกหรือขัดข้อง!
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                localStorage.removeItem("wsm_sandbox_mode");
+                window.location.reload();
+              }}
+              className="bg-white hover:bg-emerald-50 text-emerald-800 font-bold text-xs px-4 py-2.5 rounded-xl transition shadow-xs hover:shadow-md cursor-pointer shrink-0 active:scale-[0.98]"
+            >
+              กลับสู่โหมดออนไลน์ (Cloud DB)
+            </button>
+          </div>
+        )}
+
         {currentUser?.approved === false && (
           <div className="bg-gradient-to-r from-amber-500 to-amber-600 text-white px-5 py-4 rounded-2xl mb-6 shadow-md border border-amber-400/20">
             <p className="font-extrabold text-sm flex items-center gap-2">
@@ -1452,6 +1604,7 @@ export default function App() {
           )}
           {activeTab === "products_master" && <ProductsView />}
           {activeTab === "employees_permissions" && <EmployeesView currentUser={currentUser} />}
+          {activeTab === "google_sheets" && <GoogleSheetsView currentUser={currentUser} />}
           {activeTab === "stock_adjust" && <AdjustView currentUser={currentUser} />}
           {activeTab === "deposit_withdraw" && <DepositWithdrawView currentUser={currentUser} />}
           {activeTab === "reports_print" && <ReportsView currentUser={currentUser} />}

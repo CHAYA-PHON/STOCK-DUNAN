@@ -6,8 +6,9 @@ import { Employee, APP_VERSION } from "../types";
 import { 
   Settings, Shield, Plus, Key, Layers, Compass, HelpCircle, User, 
   Phone, Image, Calendar, History, UploadCloud, Loader2, CloudLightning, CheckCircle2,
-  Trash2, Edit, ArrowRight, Monitor, Download, Laptop, X, Info
+  Trash2, Edit, ArrowRight, Monitor, Download, Laptop, X, Info, RefreshCw, AlertTriangle
 } from "lucide-react";
+import { reconcileProductMasterStocks } from "../utils/syncQueue";
 
 interface SettingsViewProps {
   currentUser: Employee | null;
@@ -157,6 +158,40 @@ pause
   const [editingFlow, setEditingFlow] = useState<any | null>(null);
 
   const isAuthorized = currentUser?.role === "admin" || currentUser?.role === "leader";
+
+  // Reconciliation states
+  const [isReconciling, setIsReconciling] = useState(false);
+  const [reconcileResult, setReconcileResult] = useState<{ success: boolean; updatedCount: number } | null>(null);
+
+  const handleReconcile = async () => {
+    if (!currentUser) return;
+    if (currentUser?.approved === false) {
+      alert("สิทธิ์การใช้งานของคุณคือเข้าดูระบบได้เท่านั้น ไม่สามารถใช้เครื่องมือฟื้นฟูสต๊อกได้");
+      return;
+    }
+    
+    const confirmAction = window.confirm(
+      "คำเตือน: การฟื้นฟูยอดสต๊อกจะทำการตรวจสอบประวัติธุรกรรม (inventory_log) และรายการสินค้าทั้งหมดจากคลาวด์เพื่อคำนวณและปรับยอดสต๊อก Master ให้ถูกต้องใหม่\n\nการดำเนินการนี้จะใช้ Firestore Read Units ตามจำนวนข้อมูลในระบบ ยืนยันการเริ่มตรวจสอบและปรับปรุงยอดสต๊อกคงเหลือในคลังหรือไม่?"
+    );
+    if (!confirmAction) return;
+
+    setIsReconciling(true);
+    setReconcileResult(null);
+    try {
+      const res = await reconcileProductMasterStocks();
+      setReconcileResult(res);
+      if (res.success) {
+        alert(`ตรวจสอบความขัดแย้งข้อมูลสำเร็จ!\nปรับปรุงยอดสต๊อกสินค้าที่คลาดเคลื่อน: ${res.updatedCount} รายการ`);
+      } else {
+        alert("การตรวจสอบและฟื้นฟูข้อมูลสต๊อกล้มเหลว หรือโควตาฐานข้อมูลเต็ม");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("เกิดข้อผิดพลาดในระหว่างขั้นตอนตรวจสอบข้อมูล");
+    } finally {
+      setIsReconciling(false);
+    }
+  };
 
   // Sync profile editing fields with current logged-in user when it changes
   useEffect(() => {
@@ -729,6 +764,48 @@ pause
               </button>
             </form>
           </div>
+
+          {/* Stock Reconciliation Self-Healing Card */}
+          {isAuthorized && (
+            <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm space-y-4">
+              <h3 className="font-bold text-gray-800 flex items-center gap-2">
+                <CloudLightning className="w-5 h-5 text-amber-500" /> ตรวจสอบยอดสต๊อกคลาดเคลื่อน (Self-Healing Engine)
+              </h3>
+              <p className="text-xs text-gray-500 leading-relaxed">
+                ระบบสืบสวนและซ่อมแซมข้อมูลอัตโนมัติ จะดึงประวัติการเข้าออกคลัง (inventory_log) ทั้งหมดเพื่อประมวลยอดรับและยอดส่งจริง เปรียบเทียบกับยอดสต๊อก Master และกู้คืนข้อมูลที่สูญหายในกรณีที่เซิร์ฟเวอร์หรือเครือข่ายขัดข้อง
+              </p>
+
+              <div className="bg-amber-50 border border-amber-100 p-3 rounded-xl text-[11px] text-amber-800 flex gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-extrabold block">คำเตือนด้านโควตา:</span>
+                  การซิงค์ข้อมูลนี้จะทำการสแกนประวัติการโอนทั้งหมดจาก Cloud ซึ่งอาจใช้โควตาอ่านฐานข้อมูล (Read Units) สูงในกรณีที่มีธุรกรรมจำนวนมาก ควรตรวจสอบกรณีที่ต้องการจัดระเบียบยอดคงคลังใหม่เท่านั้น
+                </div>
+              </div>
+
+              {reconcileResult && (
+                <div className={`p-3 rounded-xl text-xs font-semibold ${reconcileResult.success ? "bg-emerald-50 border border-emerald-100 text-emerald-800" : "bg-red-50 border border-red-100 text-red-800"}`}>
+                  {reconcileResult.success ? (
+                    <div className="flex items-center gap-1.5">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      <span>ตรวจสอบสมบูรณ์! ปรับแก้ความคลาดเคลื่อน {reconcileResult.updatedCount} รายการ</span>
+                    </div>
+                  ) : (
+                    <span>การตรวจสอบขัดข้อง กรุณาลองใหม่อีกครั้ง</span>
+                  )}
+                </div>
+              )}
+
+              <button
+                onClick={handleReconcile}
+                disabled={isReconciling}
+                className="bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition cursor-pointer w-full flex items-center justify-center gap-1.5 shadow-sm active:scale-[0.98] disabled:bg-gray-200 disabled:cursor-not-allowed"
+              >
+                <RefreshCw className={`w-4 h-4 ${isReconciling ? "animate-spin" : ""}`} />
+                <span>{isReconciling ? "กำลังประมวลผลคำนวณและปรับยอดสต๊อก..." : "เริ่มซ่อมแซมและอัปเดตยอดคงเหลือ Master ทันที"}</span>
+              </button>
+            </div>
+          )}
 
         </div>
 

@@ -11,3 +11,5 @@ export { default as SettingsView } from "./SettingsView";
 export { default as AttendanceView } from "./AttendanceView";
 export { default as LocationRelocationView } from "./LocationRelocationView";
 export { default as LocationInspectView } from "./LocationInspectView";
+export { default as GoogleSheetsView } from "./GoogleSheetsView";
+

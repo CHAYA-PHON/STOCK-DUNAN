@@ -32,7 +32,7 @@
       // Register service worker for installable PWA with cache-busting query parameter
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-          navigator.serviceWorker.register('./sw.js?v=26.9.0').then((reg) => {
+          navigator.serviceWorker.register('./sw.js?v=26.9.3').then((reg) => {
             // Force service worker update check on every page load
             reg.update();
           }).catch((err) => {

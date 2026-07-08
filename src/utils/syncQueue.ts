@@ -1,6 +1,8 @@
 import { collection, doc, getDoc, getDocs, query, where, writeBatch } from "firebase/firestore";
 import { db } from "../firebase";
 import { Product } from "../types";
+import { getSafeProductId } from "./productUtils";
+import { appendTransactionToGoogleSheets } from "./googleSheets";
 
 export interface SyncItem {
   id: string; // unique local ID
@@ -24,11 +26,7 @@ export interface SyncItem {
 }
 
 // Generate a safe document ID for the product master, identical to StockInView and StockOutView
-export const getSafeProductId = (customer: string, partNo: string) => {
-  const safeCust = (customer || "unknown").trim().replace(/[\/.\s#$\[\]]/g, "_");
-  const safePart = (partNo || "unknown").trim().replace(/[\/.\s#$\[\]]/g, "_");
-  return `${safeCust}_${safePart}`;
-};
+export { getSafeProductId };
 
 // Generate a safe document ID for the location stock
 export const getSafeLocationStockId = (locationName: string, partNo: string) => {
@@ -193,9 +191,109 @@ export const syncSingleItem = async (item: SyncItem): Promise<{ success: boolean
     }
 
     await batch.commit();
+    
+    // Auto-sync to Google Sheets in background if enabled
+    try {
+      appendTransactionToGoogleSheets({
+        ...item,
+        // Ensure id is present for sheet row mapping
+        id: item.id || `sync_${Date.now()}`
+      }).catch(err => console.error("Sheets background auto-sync failed:", err));
+    } catch (e) {
+      console.error("Sheets auto-sync trigger err:", e);
+    }
+
     return { success: true };
   } catch (err: any) {
     console.error("Sync single item failed:", err);
     return { success: false, error: err.message || "เกิดข้อผิดพลาดในการเซฟข้อมูลสต๊อก" };
   }
 };
+
+// Reconcile and fix any discrepancies in product master stocks based on inventory_log transactions
+export const reconcileProductMasterStocks = async (): Promise<{ success: boolean; updatedCount: number }> => {
+  try {
+    // 1. Get all products from DB
+    const prodCol = collection(db, "products");
+    const prodSnap = await getDocs(prodCol);
+    const productsMap: { [id: string]: Product } = {};
+    prodSnap.forEach((doc) => {
+      productsMap[doc.id] = { id: doc.id, ...doc.data() } as Product;
+    });
+
+    // 2. Get all transaction logs from inventory_log
+    const logCol = collection(db, "inventory_log");
+    const logSnap = await getDocs(logCol);
+
+    // Calculate received and shipped totals for each product from the logs
+    const calculated: { [prodId: string]: { received: number; shipped: number } } = {};
+
+    logSnap.forEach((docSnap) => {
+      const data = docSnap.data();
+      const customer = data.customer;
+      const partNo = data.partNo;
+      const type = data.type; // "in" or "out"
+      const qty = Number(data.qty) || 0;
+
+      if (!customer || !partNo) return;
+
+      const prodId = getSafeProductId(customer, partNo);
+      if (!calculated[prodId]) {
+        calculated[prodId] = { received: 0, shipped: 0 };
+      }
+
+      if (type === "in") {
+        calculated[prodId].received += qty;
+      } else if (type === "out") {
+        calculated[prodId].shipped += qty;
+      }
+    });
+
+    // 3. Compare and update products where discrepancies exist
+    let updatedCount = 0;
+    let batch = writeBatch(db);
+    let batchSize = 0;
+
+    for (const prodId of Object.keys(productsMap)) {
+      const prod = productsMap[prodId];
+      const calc = calculated[prodId] || { received: 0, shipped: 0 };
+
+      const currentReceived = prod.receivedTotal || 0;
+      const currentShipped = prod.shippedTotal || 0;
+      const expectedStock = (prod.openingStock || 0) + calc.received - calc.shipped;
+      const currentStock = prod.stock ?? ((prod.openingStock || 0) + currentReceived - currentShipped);
+
+      if (
+        currentReceived !== calc.received ||
+        currentShipped !== calc.shipped ||
+        currentStock !== expectedStock
+      ) {
+        const prodRef = doc(db, "products", prodId);
+        batch.update(prodRef, {
+          receivedTotal: calc.received,
+          shippedTotal: calc.shipped,
+          stock: expectedStock,
+        });
+        updatedCount++;
+        batchSize++;
+
+        if (batchSize >= 400) {
+          await batch.commit();
+          batch = writeBatch(db);
+          batchSize = 0;
+        }
+      }
+    }
+
+    if (batchSize > 0) {
+      await batch.commit();
+    }
+
+    console.log(`Reconciliation complete. Updated ${updatedCount} products.`);
+    return { success: true, updatedCount };
+  } catch (err) {
+    console.error("Reconciliation failed:", err);
+    return { success: false, updatedCount: 0 };
+  }
+};
+

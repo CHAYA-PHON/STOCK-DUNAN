@@ -15,4 +15,8 @@ Format definition:
 - Current Version after adding Location Relocation System (Implemented WSM-DUNAN physical location transfer log system with no effect on global product stock quantities): `v26.8.0`
 - Current Version after adding Real-time Location Stock Inspector (Implemented dual-tab layout in Location Relocation tab allowing users to inspect stock models, count, and quantities per location in real-time): `v26.8.1`
 - Current Version after adding Dedicated Location Work Inspector (Implemented a primary sidebar tab "ตรวจสอบ Location" featuring visual layout cards, summary metrics, and a background data reconciliation service for automatic mapping of unallocated product stocks): `v26.9.0`
+- Current Version after fixing Stock-In/Out Sync Issue (Aligned and corrected getSafeProductId mismatch in syncQueue.ts to ensure stock transactions update the master product database successfully): `v26.9.1`
+- Current Version after implementing self-healing reconciliation (Implemented dynamic background reconciliation on app startup to automatically audit and restore missing master stock quantities from previous mismatched transactions): `v26.9.2`
+- Current Version after integrating Google Sheets database synchronization (Implemented full Google Sheets sync subsystem, OAuth scope bindings, spreadsheet mapping, manual bulk export/import for products, and background real-time transaction auto-syncing): `v26.10.0`
+
 

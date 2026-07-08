@@ -142,5 +142,6 @@ export async function seedDatabaseIfEmpty() {
     console.log("Database seeded successfully with default values!");
   } catch (err) {
     console.error("Error seeding database:", err);
+    throw err;
   }
 }
