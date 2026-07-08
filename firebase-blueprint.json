@@ -144,7 +144,27 @@
       "required": ["type", "name", "from", "to"]
     }
   },
-  "firestore": {
+  "LocationRelocation": {
+    "title": "LocationRelocation",
+    "description": "Logs of location relocation movements (no effect on product totals)",
+    "type": "object",
+    "properties": {
+      "id": { "type": "string" },
+      "partNo": { "type": "string" },
+      "partName": { "type": "string" },
+      "customer": { "type": "string" },
+      "fromLocation": { "type": "string" },
+      "toLocation": { "type": "string" },
+      "qty": { "type": "number" },
+      "operatorId": { "type": "string" },
+      "operatorName": { "type": "string" },
+      "shift": { "type": "string" },
+      "timestamp": { "type": "string" }
+    },
+    "required": ["id", "partNo", "fromLocation", "toLocation", "qty", "operatorId"]
+  }
+},
+"firestore": {
     "/employees/{employeeId}": {
       "schema": "Employee",
       "description": "Collection of employee accounts"
@@ -180,6 +200,10 @@
     "/deliveryFlows/{flowId}": {
       "schema": "DeliveryFlow",
       "description": "Dynamic transaction delivery type flows"
+    },
+    "/location_relocations/{relocationId}": {
+      "schema": "LocationRelocation",
+      "description": "Logs of location relocation movements"
     }
   }
 }

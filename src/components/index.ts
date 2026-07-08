@@ -9,3 +9,5 @@ export { default as DepositWithdrawView } from "./DepositWithdrawView";
 export { default as ReportsView } from "./ReportsView";
 export { default as SettingsView } from "./SettingsView";
 export { default as AttendanceView } from "./AttendanceView";
+export { default as LocationRelocationView } from "./LocationRelocationView";
+export { default as LocationInspectView } from "./LocationInspectView";

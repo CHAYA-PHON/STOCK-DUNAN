@@ -134,6 +134,20 @@ export interface LocationItem {
   created: any;
 }
 
+export interface LocationRelocation {
+  id: string;
+  partNo: string;
+  partName: string;
+  customer: string;
+  fromLocation: string;
+  toLocation: string;
+  qty: number;
+  operatorId: string;
+  operatorName: string;
+  shift: "DAY" | "NIGHT";
+  timestamp: any;
+}
+
 export interface DeliveryFlow {
   id: string;
   type: string; // "รับงาน" | "โอนงาน" | "ส่งงาน"
@@ -152,5 +166,5 @@ export interface NotificationItem {
   linkTab?: string;
 }
 
-export const APP_VERSION = "v26.5.3 Stable Release";
+export const APP_VERSION = "v26.9.0 Stable Release";
 export const APP_TITLE = "WSM-DUNAN CENTER";

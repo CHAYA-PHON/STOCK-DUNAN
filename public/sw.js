@@ -1,4 +1,4 @@
-const CACHE_NAME = 'wsm-attendance-v2';
+const CACHE_NAME = 'wsm-attendance-v4';
 const PRECACHE_ASSETS = ['./', './index.html', './app_icon.jpg', './manifest.json'];
 
 self.addEventListener('install', (e) => {
@@ -42,41 +42,18 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // Network-First strategy for index.html / root path to prevent stale bundle references
-  const isHTML = e.request.headers.get('accept')?.includes('text/html') || 
-                 url.pathname === '/' || 
-                 url.pathname.endsWith('index.html');
-
-  if (isHTML) {
-    e.respondWith(
-      fetch(e.request)
-        .then((response) => {
-          if (response.ok) {
-            const copy = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(e.request, copy));
-          }
-          return response;
-        })
-        .catch(() => {
-          return caches.match(e.request);
-        })
-    );
-    return;
-  }
-
-  // Cache-First (with network fallback) for static assets, images, icons, etc.
+  // Network-First strategy for all assets to prevent stale code files and bundle assets in preview
   e.respondWith(
-    caches.match(e.request).then((cachedResponse) => {
-      if (cachedResponse) {
-        return cachedResponse;
-      }
-      return fetch(e.request).then((networkResponse) => {
-        if (networkResponse.ok) {
-          const copy = networkResponse.clone();
+    fetch(e.request)
+      .then((response) => {
+        if (response.ok) {
+          const copy = response.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(e.request, copy));
         }
-        return networkResponse;
-      });
-    })
+        return response;
+      })
+      .catch(() => {
+        return caches.match(e.request);
+      })
   );
 });

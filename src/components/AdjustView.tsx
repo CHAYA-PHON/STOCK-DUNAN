@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from "react";
-import { collection, onSnapshot, doc, setDoc, updateDoc, writeBatch, addDoc } from "firebase/firestore";
+import { collection, onSnapshot, doc, setDoc, updateDoc, writeBatch, addDoc, query, where, getDocs } from "firebase/firestore";
 import { db } from "../firebase";
 import { Product, Employee, AdjustRequest } from "../types";
 import { fuzzySearch } from "../utils/fuzzy";
 import { getSafeProductId } from "../utils/productUtils";
 import * as XLSX from "xlsx";
-import { Search, AlertCircle, Clock, Check, X, ShieldAlert, Edit, Upload, Clipboard, FileSpreadsheet, Sparkles, Plus, Download } from "lucide-react";
+import { Search, AlertCircle, Clock, Check, X, ShieldAlert, Edit, Upload, Clipboard, FileSpreadsheet, Sparkles, Plus, Download, Brain, Bot, Loader2, Info, TrendingDown, TrendingUp, AlertTriangle } from "lucide-react";
 import { DEFAULT_BOI_CUSTOMERS, BOICustomer } from "../utils/boxSizeUtils";
 
 interface AdjustViewProps {
@@ -52,6 +52,136 @@ export default function AdjustView({ currentUser }: AdjustViewProps) {
   const [showPasteModal, setShowPasteModal] = useState(false);
   const [pastedText, setPastedText] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // AI Stock Discrepancy Predictor States
+  const [aiPredictLoading, setAiPredictLoading] = useState(false);
+  const [aiPredictError, setAiPredictError] = useState<string | null>(null);
+  const [aiPredictResult, setAiPredictResult] = useState<string | null>(null);
+
+  // Markdown rendering helper for discrepancy analysis
+  const renderPredictMarkdown = (text: string) => {
+    if (!text) return null;
+    return text.split("\n").map((line, idx) => {
+      const cleanLine = line.trim();
+      
+      // Horizontal Rules
+      if (cleanLine === "---" || cleanLine === "***") {
+        return <hr key={idx} className="border-slate-800 my-3" />;
+      }
+      
+      // Headers
+      if (cleanLine.startsWith("### ")) {
+        return <h4 key={idx} className="text-xs font-bold text-slate-100 mt-3.5 mb-1.5 flex items-center gap-1 text-red-300">{cleanLine.substring(4)}</h4>;
+      }
+      if (cleanLine.startsWith("## ")) {
+        return <h3 key={idx} className="text-sm font-extrabold text-red-400 mt-4 mb-2 border-b border-slate-800/60 pb-1.5 flex items-center gap-1.5"><Sparkles className="w-4 h-4 text-red-400 shrink-0" /> {cleanLine.substring(3)}</h3>;
+      }
+      if (cleanLine.startsWith("# ")) {
+        return <h2 key={idx} className="text-base font-black text-red-500 mt-5 mb-3">{cleanLine.substring(2)}</h2>;
+      }
+
+      // Check list items
+      if (cleanLine.startsWith("- ") || cleanLine.startsWith("* ")) {
+        const content = cleanLine.substring(2);
+        const parts = content.split("**");
+        return (
+          <li key={idx} className="list-disc ml-4 mb-1.5 text-slate-300 leading-relaxed text-[11px]">
+            {parts.map((part, pIdx) => pIdx % 2 === 1 ? <strong key={pIdx} className="text-red-300 font-extrabold">{part}</strong> : part)}
+          </li>
+        );
+      }
+
+      // Numbered lists
+      if (/^\d+\.\s/.test(cleanLine)) {
+        const content = cleanLine.replace(/^\d+\.\s/, "");
+        const match = cleanLine.match(/^\d+/);
+        const num = match ? match[0] : "1";
+        const parts = content.split("**");
+        return (
+          <div key={idx} className="flex gap-2.5 mb-2.5 text-[11px] text-slate-300 items-start leading-relaxed">
+            <span className="font-bold text-red-400 font-mono shrink-0 bg-red-950/50 w-4.5 h-4.5 rounded-full flex items-center justify-center border border-red-900/35 text-[9px] mt-0.5">{num}</span>
+            <div className="flex-1">
+              {parts.map((part, pIdx) => pIdx % 2 === 1 ? <strong key={pIdx} className="text-red-300 font-extrabold">{part}</strong> : part)}
+            </div>
+          </div>
+        );
+      }
+
+      if (cleanLine === "") return <div key={idx} className="h-1.5" />;
+
+      // Normal paragraph with bold replacements
+      const parts = line.split("**");
+      return (
+        <p key={idx} className="text-slate-300 leading-relaxed text-[11px] mb-1.5">
+          {parts.map((part, pIdx) => pIdx % 2 === 1 ? <strong key={pIdx} className="text-red-300 font-extrabold">{part}</strong> : part)}
+        </p>
+      );
+    });
+  };
+
+  const handlePredictDiscrepancy = async () => {
+    if (!selectedProduct) return;
+    setAiPredictLoading(true);
+    setAiPredictError(null);
+    setAiPredictResult(null);
+
+    try {
+      // 1. Fetch recent transactions for this partNo from Firestore
+      const logRef = collection(db, "inventory_log");
+      const q = query(logRef, where("partNo", "==", selectedProduct.partNo));
+      const querySnapshot = await getDocs(q);
+      
+      const recentTxs: any[] = [];
+      querySnapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        recentTxs.push({
+          id: docSnap.id,
+          type: data.type,
+          subType: data.subType || "",
+          qty: data.qty || 0,
+          operatorName: data.operatorName || "",
+          timestamp: data.timestamp?.toDate ? data.timestamp.toDate() : new Date(data.timestamp),
+          location: data.location || "",
+          shift: data.shift || ""
+        });
+      });
+
+      // Sort in memory (newest first)
+      recentTxs.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+      // Slice top 15
+      const slicedTxs = recentTxs.slice(0, 15);
+
+      // 2. Call backend endpoint
+      const response = await fetch("/api/ai/predict-discrepancy", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          partNo: selectedProduct.partNo,
+          partName: selectedProduct.partName,
+          customer: selectedProduct.customer,
+          systemStock: selectedProduct.stock || 0,
+          countedQty: actualStock,
+          fullBox: selectedProduct.fullBox || 0,
+          recentTransactions: slicedTxs
+        })
+      });
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || "เกิดข้อผิดพลาดในการวิเคราะห์ด้วย AI");
+      }
+
+      const data = await response.json();
+      setAiPredictResult(data.analysis);
+    } catch (err: any) {
+      console.error(err);
+      setAiPredictError(err.message || "ไม่สามารถเชื่อมต่อระบบ AI ได้สำเร็จ");
+    } finally {
+      setAiPredictLoading(false);
+    }
+  };
 
   const downloadExcelTemplate = () => {
     // Generate sample data using XLSX
@@ -770,197 +900,289 @@ export default function AdjustView({ currentUser }: AdjustViewProps) {
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Requester Form */}
-        <form onSubmit={handleCreateRequest} className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm space-y-4 lg:col-span-4">
-          <h3 className="font-bold text-gray-800 flex items-center gap-2">
-            <AlertCircle className="w-5 h-5 text-red-600 animate-pulse" /> ยื่นคำขอปรับปรุงสต๊อก
-          </h3>
+        <div className="lg:col-span-4 space-y-6">
+          {/* Requester Form */}
+          <form onSubmit={handleCreateRequest} className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm space-y-4">
+            <h3 className="font-bold text-gray-800 flex items-center gap-2">
+              <AlertCircle className="w-5 h-5 text-red-600 animate-pulse" /> ยื่นคำขอปรับปรุงสต๊อก
+            </h3>
 
-          <div>
-            <label className="text-xs font-semibold text-gray-600 block">ค้นหา Part No (Fuzzy Search)</label>
-            <div className="relative mt-1">
-              <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                placeholder="พิมพ์พาร์ทที่นับจริงคลาดเคลื่อน..."
-                value={partSearch}
-                onChange={(e) => setPartSearch(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-xl text-sm"
-              />
-            </div>
-
-            {fuzzyResults.length > 0 && (
-              <div className="bg-white border rounded-xl max-h-[140px] overflow-y-auto shadow-md p-1 mt-1 space-y-0.5 relative z-10">
-                {fuzzyResults.slice(0, 5).map((prod) => (
-                  <button
-                    key={prod.id}
-                    type="button"
-                    onClick={() => handleSelectProduct(prod)}
-                    className="w-full text-left text-xs p-2 rounded-lg hover:bg-gray-50 flex justify-between"
-                  >
-                    <span className="font-bold">{prod.partNo}</span>
-                    <span className="text-gray-400">ระบบเหลือ: {prod.stock || 0}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {selectedProduct && (
-            <div className="bg-gray-50 p-4 rounded-xl border space-y-2.5">
-              <div className="flex justify-between">
-                <span className="font-bold text-gray-800 text-xs">{selectedProduct.partNo}</span>
-                <span className="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded font-bold uppercase">
-                  {selectedProduct.customer}
-                </span>
-              </div>
-              <p className="text-[11px] text-gray-500">{selectedProduct.partName}</p>
-
-              {/* BOI Sub-Customer Selector */}
-              {selectedProduct.customer.toUpperCase() === "BOI" && (
-                <div className="bg-red-50/50 border border-red-200/60 p-3 rounded-xl space-y-2">
-                  <div className="flex justify-between items-center">
-                    <span className="text-[10px] font-bold text-red-800 flex items-center gap-1">
-                      💼 ลูกค้ากลุ่ม BOI
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setIsAddingBoi(!isAddingBoi)}
-                      className="text-[9px] bg-red-600 hover:bg-red-700 text-white font-semibold px-1.5 py-0.5 rounded transition flex items-center gap-0.5 cursor-pointer"
-                    >
-                      <Plus className="w-2.5 h-2.5" /> เพิ่ม
-                    </button>
-                  </div>
-
-                  {isAddingBoi ? (
-                    <div className="bg-white border border-red-100 p-2 rounded-lg space-y-2 shadow-xs">
-                      <input
-                        type="text"
-                        placeholder="ระบุชื่อลูกค้า เช่น SAMBO"
-                        value={newBoiName}
-                        onChange={(e) => setNewBoiName(e.target.value)}
-                        className="w-full px-2 py-1 border border-gray-200 rounded text-[11px] outline-none"
-                      />
-                      <div className="flex items-center justify-between">
-                        <div className="flex gap-2">
-                          <label className="flex items-center gap-0.5 text-[9px] text-gray-600">
-                            <input
-                              type="radio"
-                              name="boi_group_adj"
-                              checked={newBoiGroup === "CTC"}
-                              onChange={() => setNewBoiGroup("CTC")}
-                            />
-                            CTC
-                          </label>
-                          <label className="flex items-center gap-0.5 text-[9px] text-gray-600">
-                            <input
-                              type="radio"
-                              name="boi_group_adj"
-                              checked={newBoiGroup === "อื่นๆ"}
-                              onChange={() => setNewBoiGroup("อื่นๆ")}
-                            />
-                            อื่นๆ
-                          </label>
-                        </div>
-                        <div className="flex gap-1">
-                          <button
-                            type="button"
-                            onClick={() => setIsAddingBoi(false)}
-                            className="text-[9px] text-gray-400 hover:text-gray-600 font-medium px-1.5 py-0.5 rounded"
-                          >
-                            ยกเลิก
-                          </button>
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              if (!newBoiName.trim()) {
-                                alert("กรุณากรอกชื่อลูกค้า");
-                                return;
-                              }
-                              try {
-                                await addDoc(collection(db, "boi_sub_customers"), {
-                                  name: newBoiName.trim().toUpperCase(),
-                                  group: newBoiGroup
-                                });
-                                setNewBoiName("");
-                                setIsAddingBoi(false);
-                                alert("เพิ่มรายชื่อลูกค้า BOI สำเร็จ!");
-                              } catch (err) {
-                                console.error("Error adding BOI sub customer:", err);
-                              }
-                            }}
-                            className="text-[9px] text-white bg-red-600 hover:bg-red-700 px-2 py-0.5 rounded font-semibold"
-                          >
-                            บันทึก
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ) : null}
-
-                  <div>
-                    <select
-                      value={selectedBoiSubCustomer}
-                      onChange={(e) => setSelectedBoiSubCustomer(e.target.value)}
-                      className="w-full px-2 py-1.5 border border-red-200 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-red-500 bg-white font-medium"
-                    >
-                      <option value="">-- กรุณาเลือกชื่อลูกค้า BOI --</option>
-                      <optgroup label="กลุ่ม CTC">
-                        {boiCustomers
-                          .filter((c) => c.group === "CTC")
-                          .map((c) => (
-                            <option key={c.id || c.name} value={c.name}>
-                              {c.name}
-                            </option>
-                          ))}
-                      </optgroup>
-                      <optgroup label="อื่นๆ">
-                        {boiCustomers
-                          .filter((c) => c.group === "อื่นๆ")
-                          .map((c) => (
-                            <option key={c.id || c.name} value={c.name}>
-                              {c.name}
-                            </option>
-                          ))}
-                      </optgroup>
-                    </select>
-                  </div>
-                </div>
-              )}
-
-              <div className="flex justify-between items-center bg-white p-2.5 rounded-lg border border-gray-100 text-xs font-semibold">
-                <span className="text-gray-500">ยอดสต๊อกในระบบปัจจุบัน:</span>
-                <span className="text-gray-900 text-sm font-bold">{selectedProduct.stock || 0} ชิ้น</span>
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-gray-700 block">ยอดจำนวนที่นับได้ทางกายภาพจริง *</label>
+            <div>
+              <label className="text-xs font-semibold text-gray-600 block">ค้นหา Part No (Fuzzy Search)</label>
+              <div className="relative mt-1">
+                <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
-                  type="number"
-                  value={actualStock}
-                  onChange={(e) => setActualStock(Number(e.target.value))}
-                  className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm font-bold focus:ring-1 focus:ring-red-500 outline-none"
+                  type="text"
+                  placeholder="พิมพ์พาร์ทที่นับจริงคลาดเคลื่อน..."
+                  value={partSearch}
+                  onChange={(e) => setPartSearch(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-xl text-sm"
                 />
               </div>
 
-              <div className="flex justify-between items-center text-xs font-bold text-gray-700 pt-1 border-t border-dashed">
-                <span>ส่วนต่างคลาดเคลื่อน:</span>
-                <span className={`text-sm ${actualStock - (selectedProduct.stock || 0) >= 0 ? "text-green-600" : "text-red-500"}`}>
-                  {actualStock - (selectedProduct.stock || 0) >= 0 ? "+" : ""}
-                  {actualStock - (selectedProduct.stock || 0)} ชิ้น
-                </span>
+              {fuzzyResults.length > 0 && (
+                <div className="bg-white border rounded-xl max-h-[140px] overflow-y-auto shadow-md p-1 mt-1 space-y-0.5 relative z-10">
+                  {fuzzyResults.slice(0, 5).map((prod) => (
+                    <button
+                      key={prod.id}
+                      type="button"
+                      onClick={() => handleSelectProduct(prod)}
+                      className="w-full text-left text-xs p-2 rounded-lg hover:bg-gray-50 flex justify-between"
+                    >
+                      <span className="font-bold">{prod.partNo}</span>
+                      <span className="text-gray-400">ระบบเหลือ: {prod.stock || 0}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {selectedProduct && (
+              <div className="bg-gray-50 p-4 rounded-xl border space-y-2.5">
+                <div className="flex justify-between">
+                  <span className="font-bold text-gray-800 text-xs">{selectedProduct.partNo}</span>
+                  <span className="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded font-bold uppercase">
+                    {selectedProduct.customer}
+                  </span>
+                </div>
+                <p className="text-[11px] text-gray-500">{selectedProduct.partName}</p>
+
+                {/* BOI Sub-Customer Selector */}
+                {selectedProduct.customer.toUpperCase() === "BOI" && (
+                  <div className="bg-red-50/50 border border-red-200/60 p-3 rounded-xl space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-[10px] font-bold text-red-800 flex items-center gap-1">
+                        💼 ลูกค้ากลุ่ม BOI
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setIsAddingBoi(!isAddingBoi)}
+                        className="text-[9px] bg-red-600 hover:bg-red-700 text-white font-semibold px-1.5 py-0.5 rounded transition flex items-center gap-0.5 cursor-pointer"
+                      >
+                        <Plus className="w-2.5 h-2.5" /> เพิ่ม
+                      </button>
+                    </div>
+
+                    {isAddingBoi ? (
+                      <div className="bg-white border border-red-100 p-2 rounded-lg space-y-2 shadow-xs">
+                        <input
+                          type="text"
+                          placeholder="ระบุชื่อลูกค้า เช่น SAMBO"
+                          value={newBoiName}
+                          onChange={(e) => setNewBoiName(e.target.value)}
+                          className="w-full px-2 py-1 border border-gray-200 rounded text-[11px] outline-none"
+                        />
+                        <div className="flex items-center justify-between">
+                          <div className="flex gap-2">
+                            <label className="flex items-center gap-0.5 text-[9px] text-gray-600">
+                              <input
+                                type="radio"
+                                name="boi_group_adj"
+                                checked={newBoiGroup === "CTC"}
+                                onChange={() => setNewBoiGroup("CTC")}
+                              />
+                              CTC
+                            </label>
+                            <label className="flex items-center gap-0.5 text-[9px] text-gray-600">
+                              <input
+                                type="radio"
+                                name="boi_group_adj"
+                                checked={newBoiGroup === "อื่นๆ"}
+                                onChange={() => setNewBoiGroup("อื่นๆ")}
+                              />
+                              อื่นๆ
+                            </label>
+                          </div>
+                          <div className="flex gap-1">
+                            <button
+                              type="button"
+                              onClick={() => setIsAddingBoi(false)}
+                              className="text-[9px] text-gray-400 hover:text-gray-600 font-medium px-1.5 py-0.5 rounded"
+                            >
+                              ยกเลิก
+                            </button>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                if (!newBoiName.trim()) {
+                                  alert("กรุณากรอกชื่อลูกค้า");
+                                  return;
+                                }
+                                try {
+                                  await addDoc(collection(db, "boi_sub_customers"), {
+                                    name: newBoiName.trim().toUpperCase(),
+                                    group: newBoiGroup
+                                  });
+                                  setNewBoiName("");
+                                  setIsAddingBoi(false);
+                                  alert("เพิ่มรายชื่อลูกค้า BOI สำเร็จ!");
+                                } catch (err) {
+                                  console.error("Error adding BOI sub customer:", err);
+                                }
+                              }}
+                              className="text-[9px] text-white bg-red-600 hover:bg-red-700 px-2 py-0.5 rounded font-semibold"
+                            >
+                              บันทึก
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <div>
+                      <select
+                        value={selectedBoiSubCustomer}
+                        onChange={(e) => setSelectedBoiSubCustomer(e.target.value)}
+                        className="w-full px-2 py-1.5 border border-red-200 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-red-500 bg-white font-medium"
+                      >
+                        <option value="">-- กรุณาเลือกชื่อลูกค้า BOI --</option>
+                        <optgroup label="กลุ่ม CTC">
+                          {boiCustomers
+                            .filter((c) => c.group === "CTC")
+                            .map((c) => (
+                              <option key={c.id || c.name} value={c.name}>
+                                {c.name}
+                              </option>
+                            ))}
+                        </optgroup>
+                        <optgroup label="อื่นๆ">
+                          {boiCustomers
+                            .filter((c) => c.group === "อื่นๆ")
+                            .map((c) => (
+                              <option key={c.id || c.name} value={c.name}>
+                                {c.name}
+                              </option>
+                            ))}
+                        </optgroup>
+                      </select>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex justify-between items-center bg-white p-2.5 rounded-lg border border-gray-100 text-xs font-semibold">
+                  <span className="text-gray-500">ยอดสต๊อกในระบบปัจจุบัน:</span>
+                  <span className="text-gray-900 text-sm font-bold">{selectedProduct.stock || 0} ชิ้น</span>
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-gray-700 block">ยอดจำนวนที่นับได้ทางกายภาพจริง *</label>
+                  <input
+                    type="number"
+                    value={actualStock}
+                    onChange={(e) => setActualStock(Number(e.target.value))}
+                    className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm font-bold focus:ring-1 focus:ring-red-500 outline-none"
+                  />
+                </div>
+
+                <div className="flex justify-between items-center text-xs font-bold text-gray-700 pt-1 border-t border-dashed">
+                  <span>ส่วนต่างคลาดเคลื่อน:</span>
+                  <span className={`text-sm ${actualStock - (selectedProduct.stock || 0) >= 0 ? "text-green-600" : "text-red-500"}`}>
+                    {actualStock - (selectedProduct.stock || 0) >= 0 ? "+" : ""}
+                    {actualStock - (selectedProduct.stock || 0)} ชิ้น
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={!selectedProduct}
+              className="w-full bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-xl text-xs font-bold transition disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed select-none cursor-pointer"
+            >
+              ส่งคำขอไปยังหัวหน้างาน
+            </button>
+          </form>
+
+          {/* AI Stock Discrepancy Predictor Widget */}
+          {selectedProduct && (
+            <div className="bg-slate-900 text-white p-5 rounded-2xl border border-slate-800 shadow-xl relative overflow-hidden">
+              {/* Decorative subtle gradient background glow */}
+              <div className="absolute top-0 right-0 w-32 h-32 bg-red-500/10 rounded-full filter blur-2xl -mr-10 -mt-10 pointer-events-none" />
+
+              <div className="relative z-10 space-y-3.5">
+                <div className="flex items-center gap-2.5 pb-2.5 border-b border-slate-800">
+                  <div className="w-8.5 h-8.5 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-400">
+                    <Bot className="w-4.5 h-4.5" />
+                  </div>
+                  <div>
+                    <h4 className="font-extrabold text-[11px] flex items-center gap-1 tracking-tight text-white">
+                      🔮 AI Predictor (วิเคราะห์คลาดเคลื่อน)
+                    </h4>
+                    <p className="text-[9px] text-slate-400">หาสาเหตุ ลืมโอนออก / งานเกินสต๊อก ของ {selectedProduct.partNo}</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 text-[10px] font-mono">
+                  <div className="bg-slate-950/40 p-2 rounded-lg border border-slate-800 text-center">
+                    <span className="text-slate-500 block text-[9px] mb-0.5">ในระบบ</span>
+                    <span className="font-bold text-slate-300">{selectedProduct.stock || 0} ชิ้น</span>
+                  </div>
+                  <div className="bg-slate-950/40 p-2 rounded-lg border border-slate-800 text-center">
+                    <span className="text-slate-500 block text-[9px] mb-0.5">นับจริง</span>
+                    <span className="font-bold text-slate-300">{actualStock} ชิ้น</span>
+                  </div>
+                  <div className="bg-slate-950/40 p-2 rounded-lg border border-slate-800 text-center">
+                    <span className="text-slate-500 block text-[9px] mb-0.5">คลาดเคลื่อน</span>
+                    <span className={`font-bold ${actualStock - (selectedProduct.stock || 0) >= 0 ? "text-green-400" : "text-red-400"}`}>
+                      {actualStock - (selectedProduct.stock || 0) >= 0 ? "+" : ""}
+                      {actualStock - (selectedProduct.stock || 0)}
+                    </span>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handlePredictDiscrepancy}
+                  disabled={aiPredictLoading}
+                  className="w-full bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-white font-extrabold py-2 px-3 rounded-xl text-[10px] flex items-center justify-center gap-1.5 transition disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer select-none"
+                >
+                  {aiPredictLoading ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>กำลังประมวลผลคาดการณ์ด้วย AI...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Brain className="w-3.5 h-3.5 text-red-200" />
+                      <span>{aiPredictResult ? "เริ่มประมวลผลซ้ำอีกครั้ง" : "วิเคราะห์คาดการณ์ด้วย AI"}</span>
+                    </>
+                  )}
+                </button>
+
+                {/* Response displaying */}
+                {aiPredictLoading ? (
+                  <div className="py-6 flex flex-col items-center justify-center text-center space-y-2">
+                    <div className="w-8 h-8 rounded-full border-3 border-red-500/20 border-t-red-400 animate-spin" />
+                    <div className="space-y-0.5">
+                      <p className="text-[10px] font-bold text-slate-300 animate-pulse">กำลังสืบค้นประวัติในคลัง...</p>
+                      <p className="text-[9px] text-slate-500 leading-relaxed">ตรวจจับความผิดปกติของตัวเลขและยอดการเคลื่อนไหว</p>
+                    </div>
+                  </div>
+                ) : aiPredictError ? (
+                  <div className="bg-red-950/20 border border-red-900/35 rounded-xl p-3 flex gap-2 text-red-200">
+                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <div className="text-[10px] space-y-0.5 leading-relaxed">
+                      <span className="font-bold">เชื่อมต่อ AI ล้มเหลว</span>
+                      <p className="text-red-300/80">{aiPredictError}</p>
+                    </div>
+                  </div>
+                ) : aiPredictResult ? (
+                  <div className="bg-slate-950/45 border border-slate-850/60 rounded-xl p-3.5 space-y-2 max-h-[340px] overflow-y-auto scrollbar-thin scrollbar-thumb-slate-800 text-[11px] border-t-2 border-t-red-500">
+                    {renderPredictMarkdown(aiPredictResult)}
+                  </div>
+                ) : (
+                  <div className="py-3.5 border border-dashed border-slate-800 rounded-xl flex flex-col items-center justify-center text-center space-y-1.5 bg-slate-950/10">
+                    <Info className="w-3.5 h-3.5 text-slate-500" />
+                    <div className="space-y-0.5 max-w-[210px]">
+                      <span className="text-[10px] font-bold text-slate-300 block">วิเคราะห์ลืมโอนออก / งานเกินสต๊อก</span>
+                      <p className="text-[9px] text-slate-500 leading-relaxed">ระบบ AI จะวิเคราะห์ประวัติธุรกรรมเพื่อชี้ความน่าจะเป็นของความผิดพลาดแบบเรียลไทม์</p>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
-
-          <button
-            type="submit"
-            disabled={!selectedProduct}
-            className="w-full bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-xl text-xs font-bold transition disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
-          >
-            ส่งคำขอไปยังหัวหน้างาน
-          </button>
-        </form>
+        </div>
 
         {/* Requests List Container */}
         <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm lg:col-span-8 space-y-4">

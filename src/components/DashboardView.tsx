@@ -4,7 +4,8 @@ import { db } from "../firebase";
 import { Product, InventoryTransaction } from "../types";
 import { 
   TrendingUp, ArrowDownRight, ArrowUpRight, Inbox, Clock, Calendar, 
-  ShieldCheck, BarChart3, Layers, ArrowUpCircle, ArrowDownCircle 
+  ShieldCheck, BarChart3, Layers, ArrowUpCircle, ArrowDownCircle,
+  Sparkles, Brain, Bot, Loader2, Info, Copy, CheckCircle2, AlertTriangle
 } from "lucide-react";
 
 export default function DashboardView() {
@@ -13,6 +14,120 @@ export default function DashboardView() {
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1); // 1-12
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [hoveredDayIndex, setHoveredDayIndex] = useState<number | null>(null);
+
+  const [aiInsights, setAiInsights] = useState<string | null>(null);
+  const [isLoadingAI, setIsLoadingAI] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [copiedAI, setCopiedAI] = useState(false);
+
+  // Markdown rendering helper
+  const renderMarkdown = (text: string) => {
+    if (!text) return null;
+    return text.split("\n").map((line, idx) => {
+      const cleanLine = line.trim();
+      
+      // Horizontal Rules
+      if (cleanLine === "---" || cleanLine === "***") {
+        return <hr key={idx} className="border-slate-800 my-4" />;
+      }
+      
+      // Headers
+      if (cleanLine.startsWith("### ")) {
+        return <h4 key={idx} className="text-sm font-bold text-slate-100 mt-4 mb-2 flex items-center gap-1.5 text-red-300">{cleanLine.substring(4)}</h4>;
+      }
+      if (cleanLine.startsWith("## ")) {
+        return <h3 key={idx} className="text-base font-extrabold text-red-400 mt-5 mb-3 border-b border-slate-800/60 pb-1.5 flex items-center gap-2"><Sparkles className="w-4.5 h-4.5 text-red-400 shrink-0" /> {cleanLine.substring(3)}</h3>;
+      }
+      if (cleanLine.startsWith("# ")) {
+        return <h2 key={idx} className="text-lg font-black text-red-500 mt-6 mb-4">{cleanLine.substring(2)}</h2>;
+      }
+
+      // Check list items
+      if (cleanLine.startsWith("- ") || cleanLine.startsWith("* ")) {
+        const content = cleanLine.substring(2);
+        const parts = content.split("**");
+        return (
+          <li key={idx} className="list-disc ml-5 mb-1.5 text-slate-300 leading-relaxed text-xs">
+            {parts.map((part, pIdx) => pIdx % 2 === 1 ? <strong key={pIdx} className="text-red-300 font-extrabold">{part}</strong> : part)}
+          </li>
+        );
+      }
+
+      // Numbered lists
+      if (/^\d+\.\s/.test(cleanLine)) {
+        const content = cleanLine.replace(/^\d+\.\s/, "");
+        const match = cleanLine.match(/^\d+/);
+        const num = match ? match[0] : "1";
+        const parts = content.split("**");
+        return (
+          <div key={idx} className="flex gap-2.5 mb-2.5 text-xs text-slate-300 items-start leading-relaxed">
+            <span className="font-bold text-red-400 font-mono shrink-0 bg-red-950/50 w-5 h-5 rounded-full flex items-center justify-center border border-red-900/35 text-[10px] mt-0.5">{num}</span>
+            <div className="flex-1">
+              {parts.map((part, pIdx) => pIdx % 2 === 1 ? <strong key={pIdx} className="text-red-300 font-extrabold">{part}</strong> : part)}
+            </div>
+          </div>
+        );
+      }
+
+      if (cleanLine === "") return <div key={idx} className="h-2" />;
+
+      // Normal paragraph with bold replacements
+      const parts = line.split("**");
+      return (
+        <p key={idx} className="text-slate-300 leading-relaxed text-xs mb-2">
+          {parts.map((part, pIdx) => pIdx % 2 === 1 ? <strong key={pIdx} className="text-red-300 font-extrabold">{part}</strong> : part)}
+        </p>
+      );
+    });
+  };
+
+  const handleGenerateAIInsights = async () => {
+    setIsLoadingAI(true);
+    setAiError(null);
+    try {
+      const statsPayload = {
+        totalCurrentStock,
+        dailyIn,
+        dailyOut,
+        monthlyIn,
+        monthlyOut,
+        selectedMonth,
+        selectedYear,
+        customerStocks
+      };
+
+      const res = await fetch("/api/ai/insights", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          products,
+          stats: statsPayload
+        })
+      });
+
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || "ล้มเหลวในการประมวลผลสต็อกด้วยระบบ AI");
+      }
+
+      const data = await res.json();
+      setAiInsights(data.insights);
+    } catch (err: any) {
+      console.error(err);
+      setAiError(err?.message || "เกิดข้อผิดพลาดในการดึงรายงานวิเคราะห์สต็อกด้วย AI");
+    } finally {
+      setIsLoadingAI(false);
+    }
+  };
+
+  const handleCopyAI = () => {
+    if (!aiInsights) return;
+    navigator.clipboard.writeText(aiInsights);
+    setCopiedAI(true);
+    setTimeout(() => setCopiedAI(false), 2000);
+  };
 
   // Real-time stock listener
   useEffect(() => {
@@ -438,6 +553,105 @@ export default function DashboardView() {
               </span>
             </div>
             <span className="italic text-[10px]">วางเมาส์ที่แท่งกราฟเพื่อดูยอดรายวัน</span>
+          </div>
+        </div>
+
+        {/* WSM-DUNAN AI Stock Analytics Section */}
+        <div className="lg:col-span-4 bg-slate-900 border border-slate-800 rounded-3xl p-6 relative overflow-hidden text-white shadow-xl">
+          {/* Decorative glowing gradient effect */}
+          <div className="absolute top-0 right-0 w-80 h-80 bg-red-500/10 rounded-full filter blur-3xl -mr-20 -mt-20 pointer-events-none" />
+          <div className="absolute bottom-0 left-0 w-60 h-60 bg-blue-500/5 rounded-full filter blur-3xl -ml-20 -mb-20 pointer-events-none" />
+
+          <div className="relative z-10">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-800 pb-5 mb-5">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-400 shadow-inner">
+                  <Bot className="w-6 h-6 animate-pulse" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black tracking-tight text-white flex items-center gap-2">
+                    ระบบวิเคราะห์สต็อกอัจฉริยะ (AI Inventory Analytics)
+                    <span className="text-[9px] font-extrabold bg-red-500/20 text-red-400 px-2 py-0.5 rounded-full border border-red-500/30 uppercase tracking-widest animate-pulse">Gemini Active</span>
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">ใช้ความฉลาดของ AI วิเคราะห์สุขภาพคลัง แจ้งเตือนสินค้า และแนะนำกลยุทธ์ตามรอบประมวลผล</p>
+                </div>
+              </div>
+
+              <div className="flex gap-2 w-full md:w-auto">
+                {aiInsights && (
+                  <button
+                    onClick={handleCopyAI}
+                    className="flex-1 md:flex-initial bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold px-4 py-2.5 rounded-xl text-xs flex items-center justify-center gap-2 transition cursor-pointer select-none"
+                  >
+                    {copiedAI ? (
+                      <>
+                        <CheckCircle2 className="w-4 h-4 text-green-400" />
+                        <span>คัดลอกสำเร็จ!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-4 h-4" />
+                        <span>คัดลอกบทวิเคราะห์</span>
+                      </>
+                    )}
+                  </button>
+                )}
+
+                <button
+                  onClick={handleGenerateAIInsights}
+                  disabled={isLoadingAI}
+                  className="flex-1 md:flex-initial bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-white font-bold px-5 py-2.5 rounded-xl text-xs flex items-center justify-center gap-2 transition cursor-pointer shadow-lg shadow-red-950/20 disabled:opacity-50 disabled:cursor-not-allowed select-none"
+                >
+                  {isLoadingAI ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>กำลังวิเคราะห์คลัง...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4 text-red-200" />
+                      <span>{aiInsights ? "วิเคราะห์ซ้ำอีกครั้ง" : "เริ่มวิเคราะห์คลังด้วย AI"}</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* AI Insights Content area */}
+            {isLoadingAI ? (
+              <div className="py-12 flex flex-col items-center justify-center text-center space-y-4">
+                <div className="relative">
+                  <div className="w-16 h-16 rounded-full border-4 border-red-500/20 border-t-red-500 animate-spin" />
+                  <Brain className="w-6 h-6 text-red-400 absolute inset-0 m-auto animate-pulse" />
+                </div>
+                <div className="space-y-1 max-w-md">
+                  <p className="text-xs font-bold text-slate-200 animate-pulse">ระบบ AI กำลังวิเคราะห์แนวโน้มสต็อก...</p>
+                  <p className="text-[11px] text-slate-500 leading-relaxed">กำลังประมวลผลความจุกล่อง (Full Box), ยอดเข้าออกของแต่ละกลุ่มลูกค้า และสินค้าที่ต้องควบคุมปริมาณเป็นพิเศษเพื่อจัดทำคำแนะนำ</p>
+                </div>
+              </div>
+            ) : aiError ? (
+              <div className="bg-red-950/30 border border-red-900/45 rounded-2xl p-4 flex gap-3 text-red-200">
+                <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
+                <div className="text-xs space-y-1">
+                  <span className="font-bold block">ล้มเหลวในการเชื่อมต่อกับ AI</span>
+                  <p className="text-red-300/80 leading-relaxed">{aiError}</p>
+                </div>
+              </div>
+            ) : aiInsights ? (
+              <div className="bg-slate-950/40 border border-slate-850/60 rounded-2xl p-5 md:p-6 space-y-2 max-h-[450px] overflow-y-auto scrollbar-thin scrollbar-thumb-slate-800">
+                {renderMarkdown(aiInsights)}
+              </div>
+            ) : (
+              <div className="py-10 border border-dashed border-slate-800 rounded-2xl flex flex-col items-center justify-center text-center space-y-3.5 bg-slate-950/20">
+                <div className="w-12 h-12 rounded-full bg-slate-800/40 border border-slate-800 flex items-center justify-center text-slate-400">
+                  <Info className="w-5 h-5" />
+                </div>
+                <div className="space-y-1 max-w-sm">
+                  <span className="text-xs font-bold text-slate-300 block">พร้อมประมวลผลข้อมูลสต็อกเรียลไทม์</span>
+                  <p className="text-[11px] text-slate-500 leading-relaxed">กดปุ่มเริ่มวิเคราะห์คลังด้วย AI ด้านบน เพื่อสรุปสุขภาพคลัง แนะนำปริมาณสินค้าที่ต้องสั่งผลิต และแนวโน้มอย่างแม่นยำ</p>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

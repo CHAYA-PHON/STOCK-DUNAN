@@ -7,10 +7,35 @@
     <link rel="icon" type="image/jpeg" href="./app_icon.jpg" />
     <link rel="manifest" href="./manifest.json" />
     <script>
-      // Register service worker for installable PWA
+      // Prevent Vite development HMR socket errors from crashing the preview or showing annoying error overlays
+      (function() {
+        const suppressWebSocketError = (e) => {
+          const message = e.message || (e.reason && (e.reason.message || String(e.reason))) || '';
+          if (
+            message.toLowerCase().includes('websocket') || 
+            message.toLowerCase().includes('failed to connect') ||
+            (e.reason && String(e.reason).toLowerCase().includes('websocket'))
+          ) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            console.warn('Suppressed benign HMR WebSocket/network error:', message);
+            return true;
+          }
+          return false;
+        };
+
+        window.addEventListener('error', suppressWebSocketError, { capture: true });
+        window.addEventListener('unhandledrejection', suppressWebSocketError, { capture: true });
+      })();
+
+      // Register service worker for installable PWA with cache-busting query parameter
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-          navigator.serviceWorker.register('./sw.js').catch((err) => {
+          navigator.serviceWorker.register('./sw.js?v=26.9.0').then((reg) => {
+            // Force service worker update check on every page load
+            reg.update();
+          }).catch((err) => {
             console.error('Service Worker registration failed:', err);
           });
         });

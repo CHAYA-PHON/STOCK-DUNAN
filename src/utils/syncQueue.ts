@@ -30,6 +30,13 @@ export const getSafeProductId = (customer: string, partNo: string) => {
   return `${safeCust}_${safePart}`;
 };
 
+// Generate a safe document ID for the location stock
+export const getSafeLocationStockId = (locationName: string, partNo: string) => {
+  const safeLoc = (locationName || "unknown").trim().replace(/[\/.\s#$\[\]]/g, "_");
+  const safePart = (partNo || "unknown").trim().replace(/[\/.\s#$\[\]]/g, "_");
+  return `${safeLoc}_${safePart}`;
+};
+
 const STORAGE_KEY = "wsm_local_sync_queue";
 
 // Get all items in queue
@@ -136,6 +143,52 @@ export const syncSingleItem = async (item: SyncItem): Promise<{ success: boolean
           shippedTotal: currentShipped + item.qty,
           stock: Math.max(0, currentStock - item.qty),
         });
+      }
+    }
+
+    // 4. Update location stock in location_stocks collection
+    if (item.location) {
+      const locStockId = getSafeLocationStockId(item.location, item.partNo);
+      const locStockRef = doc(db, "location_stocks", locStockId);
+      const locStockSnap = await getDoc(locStockRef);
+
+      if (item.type === "in") {
+        if (locStockSnap.exists()) {
+          const currentQty = locStockSnap.data().qty || 0;
+          batch.update(locStockRef, {
+            qty: currentQty + item.qty,
+            lastUpdated: new Date()
+          });
+        } else {
+          batch.set(locStockRef, {
+            id: locStockId,
+            locationName: item.location.trim(),
+            partNo: item.partNo,
+            partName: item.partName,
+            customer: item.customer,
+            qty: item.qty,
+            lastUpdated: new Date()
+          });
+        }
+      } else { // type === "out"
+        if (locStockSnap.exists()) {
+          const currentQty = locStockSnap.data().qty || 0;
+          const newQty = Math.max(0, currentQty - item.qty);
+          batch.update(locStockRef, {
+            qty: newQty,
+            lastUpdated: new Date()
+          });
+        } else {
+          batch.set(locStockRef, {
+            id: locStockId,
+            locationName: item.location.trim(),
+            partNo: item.partNo,
+            partName: item.partName,
+            customer: item.customer,
+            qty: 0,
+            lastUpdated: new Date()
+          });
+        }
       }
     }
 

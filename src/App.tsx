@@ -15,11 +15,14 @@ import {
   ReportsView,
   SettingsView,
   AttendanceView,
+  LocationRelocationView,
+  LocationInspectView,
 } from "./components";
 import {
   LayoutDashboard,
   ArrowDownLeft,
   ArrowUpRight,
+  ArrowRightLeft,
   Package,
   Users,
   Sliders,
@@ -40,6 +43,7 @@ import {
   Trash2,
   ChevronLeft,
   Menu,
+  Layers,
 } from "lucide-react";
 
 const appIcon = new URL("./assets/images/app_icon_1783389098658.jpg", import.meta.url).href;
@@ -76,6 +80,20 @@ export default function App() {
   // Active Screen Navigation
   const [activeTab, setActiveTab] = useState<string>("dashboard");
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
+
+  // Relocation pre-fill state for jumping from Location Stock Inspector
+  const [relocationPrefill, setRelocationPrefill] = useState<{
+    fromLocation: string;
+    partNo: string;
+    qty: number;
+  } | null>(null);
+
+  const handleNavigateToTab = (tab: string, prefill?: { fromLocation: string; partNo: string; qty: number }) => {
+    if (prefill) {
+      setRelocationPrefill(prefill);
+    }
+    setActiveTab(tab);
+  };
 
   // Notifications State
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
@@ -958,6 +976,7 @@ export default function App() {
           <button onClick={() => setActiveTab("dashboard")} className={`px-2.5 py-1.5 rounded-lg shrink-0 transition-colors ${activeTab === "dashboard" ? "bg-red-600 text-white" : "hover:bg-white/5"}`}>แดชบอร์ด</button>
           <button onClick={() => setActiveTab("stock_in")} className={`px-2.5 py-1.5 rounded-lg shrink-0 transition-colors ${activeTab === "stock_in" ? "bg-red-600 text-white" : "hover:bg-white/5"}`}>รับเข้า</button>
           <button onClick={() => setActiveTab("stock_out")} className={`px-2.5 py-1.5 rounded-lg shrink-0 transition-colors ${activeTab === "stock_out" ? "bg-red-600 text-white" : "hover:bg-white/5"}`}>โอนออก</button>
+          <button onClick={() => setActiveTab("location_relocate")} className={`px-2.5 py-1.5 rounded-lg shrink-0 transition-colors ${activeTab === "location_relocate" ? "bg-red-600 text-white" : "hover:bg-white/5"}`}>ย้าย Location</button>
           <button onClick={() => setActiveTab("reports_print")} className={`px-2.5 py-1.5 rounded-lg shrink-0 transition-colors ${activeTab === "reports_print" ? "bg-red-600 text-white" : "hover:bg-white/5"}`}>รายงาน/เอกสาร</button>
           <button onClick={() => setActiveTab("deposit_withdraw")} className={`px-2.5 py-1.5 rounded-lg shrink-0 transition-colors ${activeTab === "deposit_withdraw" ? "bg-red-600 text-white" : "hover:bg-white/5"}`}>ฝาก/เบิก</button>
           <button onClick={() => setActiveTab("stock_adjust")} className={`px-2.5 py-1.5 rounded-lg shrink-0 transition-colors ${activeTab === "stock_adjust" ? "bg-red-600 text-white" : "hover:bg-white/5"}`}>ปรับยอด</button>
@@ -1199,6 +1218,32 @@ export default function App() {
             </button>
 
             <button
+              onClick={() => setActiveTab("location_relocate")}
+              className={`w-full text-left rounded-xl text-xs font-bold flex items-center transition ${
+                isSidebarCollapsed ? "justify-center p-2.5" : "px-3.5 py-2.5 gap-2.5"
+              } ${
+                activeTab === "location_relocate" ? "bg-red-600 text-white shadow-lg shadow-red-600/15" : "hover:bg-white/5 hover:text-white"
+              }`}
+              title="ย้าย Location"
+            >
+              <ArrowRightLeft className="w-4 h-4 shrink-0" />
+              {!isSidebarCollapsed && <span>ย้าย Location</span>}
+            </button>
+
+            <button
+              onClick={() => setActiveTab("location_inspect")}
+              className={`w-full text-left rounded-xl text-xs font-bold flex items-center transition ${
+                isSidebarCollapsed ? "justify-center p-2.5" : "px-3.5 py-2.5 gap-2.5"
+              } ${
+                activeTab === "location_inspect" ? "bg-red-600 text-white shadow-lg shadow-red-600/15" : "hover:bg-white/5 hover:text-white"
+              }`}
+              title="ตรวจสอบ Location"
+            >
+              <Layers className="w-4 h-4 shrink-0" />
+              {!isSidebarCollapsed && <span>ตรวจสอบ Location</span>}
+            </button>
+
+            <button
               onClick={() => setActiveTab("reports_print")}
               className={`w-full text-left rounded-xl text-xs font-bold flex items-center transition ${
                 isSidebarCollapsed ? "justify-center p-2.5" : "px-3.5 py-2.5 gap-2.5"
@@ -1391,6 +1436,19 @@ export default function App() {
           )}
           {activeTab === "stock_out" && (
             <StockOutView currentUser={currentUser} onAddToSyncQueue={handleAddToSyncQueue} />
+          )}
+          {activeTab === "location_relocate" && (
+            <LocationRelocationView
+              currentUser={currentUser}
+              prefill={relocationPrefill}
+              onClearPrefill={() => setRelocationPrefill(null)}
+            />
+          )}
+          {activeTab === "location_inspect" && (
+            <LocationInspectView
+              currentUser={currentUser}
+              onNavigateToTab={handleNavigateToTab}
+            />
           )}
           {activeTab === "products_master" && <ProductsView />}
           {activeTab === "employees_permissions" && <EmployeesView currentUser={currentUser} />}
