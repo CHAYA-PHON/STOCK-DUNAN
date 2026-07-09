@@ -21,5 +21,6 @@ Format definition:
 - Current Version after centralizing Google Sheets Database (Configured Google Sheets URL/ID as a central database stored globally in Firestore settings, enabling real-time sheet URL propagation to all users and read-only locks for non-admin roles): `v26.11.0`
 - Current Version after restricting attendance to store keepers (Filtered the shift scheduling, monthly summaries, and daily logs inside the check-in and shift system to display only user_store employees): `v26.11.1`
 - Current Version after adding reboot shortcut button (Configured sidebar refresh action to instantly reboot and reload the program page via window.location.reload): `v26.11.2`
+- Current Version after adding Searchable Locations & Negative Stock Prevention (Implemented fully searchable combobox dropdowns for source and destination locations in relocation system, paired with real-time stock-out warnings and validation to block negative physical location stocks): `v26.12.0`
 
 

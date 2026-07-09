@@ -28,6 +28,33 @@ export default function LocationRelocationView({ currentUser, prefill, onClearPr
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+  // Combobox Search and Dropdown States
+  const [fromLocSearch, setFromLocSearch] = useState("");
+  const [toLocSearch, setToLocSearch] = useState("");
+  const [isFromLocDropdownOpen, setIsFromLocDropdownOpen] = useState(false);
+  const [isToLocDropdownOpen, setIsToLocDropdownOpen] = useState(false);
+
+  const fromLocRefContainer = React.useRef<HTMLDivElement>(null);
+  const toLocRefContainer = React.useRef<HTMLDivElement>(null);
+
+  // Click outside handler for comboboxes
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (fromLocRefContainer.current && !fromLocRefContainer.current.contains(event.target as Node)) {
+        setIsFromLocDropdownOpen(false);
+        setFromLocSearch(fromLocation || "");
+      }
+      if (toLocRefContainer.current && !toLocRefContainer.current.contains(event.target as Node)) {
+        setIsToLocDropdownOpen(false);
+        setToLocSearch(toLocation || "");
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [fromLocation, toLocation]);
+
   // Prefill handler when navigated from Location Inspection board
   useEffect(() => {
     if (prefill && products.length > 0) {
@@ -36,6 +63,7 @@ export default function LocationRelocationView({ currentUser, prefill, onClearPr
         setSelectedProduct(prod);
         setPartSearch(prod.partNo);
         setFromLocation(prefill.fromLocation);
+        setFromLocSearch(prefill.fromLocation);
         setQty(prefill.qty);
         if (onClearPrefill) {
           onClearPrefill();
@@ -129,6 +157,29 @@ export default function LocationRelocationView({ currentUser, prefill, onClearPr
     setPartSearch(prod.partNo);
     setFuzzyResults([]);
   };
+
+  // Helper calculations for searchable locations and negative stock prevention
+  const locationsWithThisPart = selectedProduct
+    ? locationStocks.filter((ls) => ls.partNo.toLowerCase() === selectedProduct.partNo.toLowerCase())
+    : [];
+
+  const availableFromQty = selectedProduct && fromLocation
+    ? (locationStocks.find(
+        (ls) =>
+          ls.locationName.trim().toLowerCase() === fromLocation.trim().toLowerCase() &&
+          ls.partNo.trim().toLowerCase() === selectedProduct.partNo.trim().toLowerCase()
+      )?.qty || 0)
+    : 0;
+
+  const isQtyInvalid = selectedProduct && fromLocation && qty > availableFromQty;
+
+  const filteredFromLocations = locations.filter((loc) =>
+    loc.name.toLowerCase().includes(fromLocSearch.toLowerCase())
+  );
+
+  const filteredToLocations = locations.filter((loc) =>
+    loc.name.toLowerCase().includes(toLocSearch.toLowerCase())
+  );
 
   const handleRelocateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -240,7 +291,9 @@ export default function LocationRelocationView({ currentUser, prefill, onClearPr
       setPartSearch("");
       setSelectedProduct(null);
       setFromLocation("");
+      setFromLocSearch("");
       setToLocation("");
+      setToLocSearch("");
       setQty(0);
     } catch (err) {
       console.error("Relocation error:", err);
@@ -398,43 +451,166 @@ export default function LocationRelocationView({ currentUser, prefill, onClearPr
                 <span className="text-gray-400 font-medium">สต๊อกระบบทั้งหมด:</span>
                 <span className="font-black text-gray-900 text-sm">{selectedProduct.stock || 0} ชิ้น</span>
               </div>
+
+              {/* Show locations containing this part */}
+              {locationsWithThisPart.length > 0 ? (
+                <div className="border-t border-gray-200/60 pt-2 mt-1 space-y-1">
+                  <span className="text-[10px] text-gray-400 font-bold block">📍 ตำแหน่งที่พาร์ทนี้จัดเก็บอยู่ (คลิกเพื่อเลือกเป็นต้นทาง):</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {locationsWithThisPart.map((ls) => (
+                      <button
+                        key={ls.id}
+                        type="button"
+                        onClick={() => {
+                          setFromLocation(ls.locationName);
+                          setFromLocSearch(ls.locationName);
+                          setQty(Math.min(ls.qty, selectedProduct.fullBox || ls.qty));
+                        }}
+                        className={`text-[10px] px-2 py-1 rounded-lg border font-black transition cursor-pointer ${
+                          fromLocation === ls.locationName
+                            ? "bg-red-600 text-white border-red-600"
+                            : "bg-white text-gray-700 border-gray-200 hover:bg-gray-100"
+                        }`}
+                      >
+                        {ls.locationName} ({ls.qty})
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="text-[10px] text-amber-600 bg-amber-50/50 p-1.5 rounded border border-amber-100 font-medium">
+                  ⚠️ ยังไม่มีการระบุตำแหน่งจัดเก็บสำหรับพาร์ทนี้ในคลังสินค้า (กรุณาเลือกตำแหน่งต้นทางเพื่อย้าย)
+                </div>
+              )}
             </div>
           )}
 
           {/* Source Location */}
-          <div>
-            <label className="text-xs font-bold text-gray-600 block mb-1">ตำแหน่งต้นทาง (Source Location) *</label>
-            <select
-              value={fromLocation}
-              onChange={(e) => setFromLocation(e.target.value)}
-              required
-              className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm font-semibold outline-none focus:ring-1 focus:ring-red-500 bg-white"
-            >
-              <option value="">-- กรุณาเลือกต้นทาง --</option>
-              {locations.map((loc) => (
-                <option key={loc.id} value={loc.name}>
-                  {loc.name}
-                </option>
-              ))}
-            </select>
+          <div className="relative" ref={fromLocRefContainer}>
+            <label className="text-xs font-bold text-gray-600 block mb-1">
+              ตำแหน่งต้นทาง (Source Location) *
+            </label>
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="พิมพ์ค้นหาตำแหน่งต้นทาง..."
+                value={fromLocSearch}
+                onChange={(e) => {
+                  setFromLocSearch(e.target.value);
+                  setIsFromLocDropdownOpen(true);
+                  if (!e.target.value) {
+                    setFromLocation("");
+                  }
+                }}
+                onFocus={() => setIsFromLocDropdownOpen(true)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm font-semibold outline-none focus:ring-1 focus:ring-red-500 bg-white"
+              />
+              <Search className="w-4 h-4 text-gray-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
+
+            {isFromLocDropdownOpen && (
+              <div className="absolute z-30 w-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg max-h-48 overflow-y-auto p-1">
+                {filteredFromLocations.length === 0 ? (
+                  <div className="p-2 text-xs text-gray-400 text-center font-medium">ไม่พบตำแหน่งจัดเก็บ</div>
+                ) : (
+                  filteredFromLocations.map((loc) => {
+                    const hasStockOfSelected = selectedProduct
+                      ? (locationStocks.find(
+                          (ls) =>
+                            ls.locationName.trim().toLowerCase() === loc.name.trim().toLowerCase() &&
+                            ls.partNo.trim().toLowerCase() === selectedProduct.partNo.trim().toLowerCase()
+                        )?.qty || 0)
+                      : 0;
+
+                    return (
+                      <button
+                        key={loc.id}
+                        type="button"
+                        onClick={() => {
+                          setFromLocation(loc.name);
+                          setFromLocSearch(loc.name);
+                          setIsFromLocDropdownOpen(false);
+                        }}
+                        className={`w-full text-left text-xs p-2.5 rounded-lg hover:bg-gray-50 flex justify-between cursor-pointer ${
+                          fromLocation === loc.name ? "bg-red-50 text-red-700 font-extrabold" : "text-gray-700"
+                        }`}
+                      >
+                        <span>{loc.name}</span>
+                        {selectedProduct && hasStockOfSelected > 0 && (
+                          <span className="bg-red-100 text-red-700 text-[10px] px-1.5 py-0.5 rounded-full font-bold">
+                            มี {hasStockOfSelected} ชิ้น
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            )}
           </div>
 
           {/* Destination Location */}
-          <div>
-            <label className="text-xs font-bold text-gray-600 block mb-1">ตำแหน่งปลายทาง (Destination Location) *</label>
-            <select
-              value={toLocation}
-              onChange={(e) => setToLocation(e.target.value)}
-              required
-              className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm font-semibold outline-none focus:ring-1 focus:ring-red-500 bg-white"
-            >
-              <option value="">-- กรุณาเลือกปลายทาง --</option>
-              {locations.map((loc) => (
-                <option key={loc.id} value={loc.name}>
-                  {loc.name}
-                </option>
-              ))}
-            </select>
+          <div className="relative" ref={toLocRefContainer}>
+            <label className="text-xs font-bold text-gray-600 block mb-1">
+              ตำแหน่งปลายทาง (Destination Location) *
+            </label>
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="พิมพ์ค้นหาตำแหน่งปลายทาง..."
+                value={toLocSearch}
+                onChange={(e) => {
+                  setToLocSearch(e.target.value);
+                  setIsToLocDropdownOpen(true);
+                  if (!e.target.value) {
+                    setToLocation("");
+                  }
+                }}
+                onFocus={() => setIsToLocDropdownOpen(true)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm font-semibold outline-none focus:ring-1 focus:ring-red-500 bg-white"
+              />
+              <Search className="w-4 h-4 text-gray-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
+
+            {isToLocDropdownOpen && (
+              <div className="absolute z-30 w-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg max-h-48 overflow-y-auto p-1">
+                {filteredToLocations.length === 0 ? (
+                  <div className="p-2 text-xs text-gray-400 text-center font-medium">ไม่พบตำแหน่งจัดเก็บ</div>
+                ) : (
+                  filteredToLocations.map((loc) => {
+                    const hasStockOfSelected = selectedProduct
+                      ? (locationStocks.find(
+                          (ls) =>
+                            ls.locationName.trim().toLowerCase() === loc.name.trim().toLowerCase() &&
+                            ls.partNo.trim().toLowerCase() === selectedProduct.partNo.trim().toLowerCase()
+                        )?.qty || 0)
+                      : 0;
+
+                    return (
+                      <button
+                        key={loc.id}
+                        type="button"
+                        onClick={() => {
+                          setToLocation(loc.name);
+                          setToLocSearch(loc.name);
+                          setIsToLocDropdownOpen(false);
+                        }}
+                        className={`w-full text-left text-xs p-2.5 rounded-lg hover:bg-gray-50 flex justify-between cursor-pointer ${
+                          toLocation === loc.name ? "bg-green-50 text-green-700 font-extrabold" : "text-gray-700"
+                        }`}
+                      >
+                        <span>{loc.name}</span>
+                        {selectedProduct && hasStockOfSelected > 0 && (
+                          <span className="bg-gray-100 text-gray-600 text-[10px] px-1.5 py-0.5 rounded-full font-semibold">
+                            มีอยู่ {hasStockOfSelected} ชิ้น
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            )}
           </div>
 
           {/* Quantity */}
@@ -447,13 +623,28 @@ export default function LocationRelocationView({ currentUser, prefill, onClearPr
               placeholder="ป้อนจำนวนตัวเลข เช่น 20"
               value={qty || ""}
               onChange={(e) => setQty(Math.max(0, Number(e.target.value)))}
-              className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm font-bold focus:ring-1 focus:ring-red-500 outline-none"
+              className={`w-full px-3 py-2 border rounded-xl text-sm font-bold focus:ring-1 focus:ring-red-500 outline-none ${
+                isQtyInvalid ? "border-red-500 text-red-600" : "border-gray-200"
+              }`}
             />
+            {fromLocation && selectedProduct && (
+              <div className="mt-1 flex justify-between items-center text-[11px]">
+                <span className="text-gray-400 font-medium">มียอดในต้นทาง:</span>
+                <span className={`font-black ${availableFromQty > 0 ? "text-green-600" : "text-red-600"}`}>
+                  {availableFromQty} ชิ้น
+                </span>
+              </div>
+            )}
+            {isQtyInvalid && (
+              <p className="text-[10px] text-red-600 font-bold mt-1 flex items-center gap-1">
+                <AlertCircle className="w-3.5 h-3.5" /> ยอดโอนย้ายมากกว่าที่มีอยู่จริงในตำแหน่งต้นทาง! (มีอยู่ {availableFromQty} ชิ้น)
+              </p>
+            )}
           </div>
 
           <button
             type="submit"
-            disabled={isSubmitting || !selectedProduct}
+            disabled={isSubmitting || !selectedProduct || isQtyInvalid || qty <= 0}
             className="w-full bg-red-600 hover:bg-red-700 text-white py-3 rounded-xl text-xs font-bold tracking-wider transition disabled:bg-gray-150 disabled:text-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-1.5 cursor-pointer select-none"
           >
             {isSubmitting ? (
