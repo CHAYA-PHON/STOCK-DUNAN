@@ -177,6 +177,24 @@ export default function App() {
       };
       setNotifications((prev) => [newToast, ...prev]);
     }
+
+    if (failCount > 0) {
+      const failedItems = finalQueue.filter((item) => item.status === "failed");
+      const errorMsg = failedItems.map((item) => `- พาร์ท ${item.partNo} (Label: ${item.labelId || "-"}): ${item.errorMessage || "พบปัญหาซิงค์"}`).join("\n");
+      
+      const newErrToast: NotificationItem = {
+        id: `toast_err_${Date.now()}`,
+        title: "⚠️ ตรวจพบรายการที่อัปโหลดไม่สำเร็จ",
+        message: `มีรายการซิงค์ล้มเหลวจำนวน ${failCount} รายการเนื่องจากเลขลาเบลซ้ำหรือปัญหาการเชื่อมต่อ กรุณาตรวจสอบหรือเปลี่ยนเลขลาเบลเพื่อลองใหม่อีกครั้ง`,
+        timestamp: new Date(),
+        read: false,
+        type: "system",
+      };
+      setNotifications((prev) => [newErrToast, ...prev]);
+
+      // Trigger a direct window alert to ensure the user gets immediate attention!
+      alert(`⚠️ ตรวจพบรายการรออัปโหลดที่มีปัญหา (${failCount} รายการ)\n\nสาเหตุที่ล้มเหลว:\n${errorMsg}\n\nระบบไม่สามารถซิงค์รายการเหล่านี้ได้เนื่องจากใช้เลขลาเบลที่ซ้ำกับระบบคลังหลัก กรุณาแก้ไข เปลี่ยนเลขลาเบลใหม่ หรือลบรายการดังกล่าวออกจากคิวรออัปโหลด`);
+    }
   };
 
   // Auto-sync background scheduler
@@ -264,26 +282,42 @@ export default function App() {
       if (savedSession) {
         try {
           const parsed = JSON.parse(savedSession) as Employee;
-          // Verify with DB to make sure user still active
-          const docRef = doc(db, "employees", parsed.id);
-          try {
-            const docSnap = await getDoc(docRef);
-            if (docSnap.exists()) {
-              const liveData = docSnap.data() as Employee;
-              if (liveData.status === "Active") {
-                setCurrentUser(liveData);
-              } else {
-                localStorage.removeItem("wsm_user_session");
-              }
-            } else {
-              localStorage.removeItem("wsm_user_session");
-            }
-          } catch (fetchErr: any) {
-            const errMsg = fetchErr?.message || String(fetchErr);
-            console.warn("Could not verify session with server, falling back to local session:", errMsg);
-            // Fallback: If we are offline or server is unreachable, trust local storage so user can work offline
+          if (sandboxActive) {
+            // Under offline sandbox, always trust the local storage session to prevent re-login!
             if (parsed.status === "Active") {
               setCurrentUser(parsed);
+            }
+          } else {
+            // Verify with DB to make sure user still active
+            const docRef = doc(db, "employees", parsed.id);
+            try {
+              const docSnap = await getDoc(docRef);
+              if (docSnap.exists()) {
+                const liveData = docSnap.data() as Employee;
+                if (liveData.status === "Active") {
+                  setCurrentUser(liveData);
+                  localStorage.setItem("wsm_user_session", JSON.stringify(liveData));
+                } else {
+                  localStorage.removeItem("wsm_user_session");
+                }
+              } else {
+                // If the snapshot says it doesn't exist, but it's loaded from cache (offline),
+                // do NOT clear the session, as it's likely a cache miss. Only clear if verified online from server.
+                if ((docSnap as any).metadata && !(docSnap as any).metadata.fromCache) {
+                  localStorage.removeItem("wsm_user_session");
+                } else {
+                  if (parsed.status === "Active") {
+                    setCurrentUser(parsed);
+                  }
+                }
+              }
+            } catch (fetchErr: any) {
+              const errMsg = fetchErr?.message || String(fetchErr);
+              console.warn("Could not verify session with server, falling back to local session:", errMsg);
+              // Fallback: If we are offline or server is unreachable, trust local storage so user can work offline
+              if (parsed.status === "Active") {
+                setCurrentUser(parsed);
+              }
             }
           }
         } catch (err: any) {

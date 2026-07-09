@@ -22,5 +22,7 @@ Format definition:
 - Current Version after restricting attendance to store keepers (Filtered the shift scheduling, monthly summaries, and daily logs inside the check-in and shift system to display only user_store employees): `v26.11.1`
 - Current Version after adding reboot shortcut button (Configured sidebar refresh action to instantly reboot and reload the program page via window.location.reload): `v26.11.2`
 - Current Version after adding Searchable Locations & Negative Stock Prevention (Implemented fully searchable combobox dropdowns for source and destination locations in relocation system, paired with real-time stock-out warnings and validation to block negative physical location stocks): `v26.12.0`
+- Current Version after fixing Sync Queue Duplicate Label notifications, Auto-populating stock-out quantity from matching stock-in labels, Deferring Full Box confirmations, appending Employee IDs to auto-labels, and clearing Label input upon adding to cart: `v26.13.0`
+- Current Version after fixing Offline/Sandbox Session Auto-logout issue (Bypassed online checks when Sandbox is active and protected local session from deletions on Firestore cache misses or Quota Exceeded errors): `v26.13.1`
 
 

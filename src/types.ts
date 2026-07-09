@@ -166,5 +166,5 @@ export interface NotificationItem {
   linkTab?: string;
 }
 
-export const APP_VERSION = "v26.12.0 Stable Release";
+export const APP_VERSION = "v26.13.1 Stable Release";
 export const APP_TITLE = "WSM-DUNAN CENTER";

@@ -212,7 +212,9 @@ export default function StockOutView({ currentUser, onAddToSyncQueue }: StockOut
 
     const exact = products.find((p) => p.partNo.toLowerCase() === partSearch.trim().toLowerCase());
     if (exact) {
-      handleSelectProduct(exact);
+      if (!selectedProduct || selectedProduct.partNo.toLowerCase() !== exact.partNo.toLowerCase()) {
+        handleSelectProduct(exact);
+      }
     }
   }, [partSearch, products]);
 
@@ -272,11 +274,13 @@ export default function StockOutView({ currentUser, onAddToSyncQueue }: StockOut
     }
   };
 
-  const handleFullBoxChange = async (newVal: number) => {
+  const handleFullBoxTyping = (newVal: number) => {
     setEditFullBox(newVal);
     setQty(newVal);
+  };
 
-    if (selectedProduct && newVal !== selectedProduct.fullBox) {
+  const handleFullBoxConfirm = async (newVal: number) => {
+    if (selectedProduct && newVal !== selectedProduct.fullBox && newVal > 0) {
       if (confirm(`คุณต้องการปรับปรุงจำนวน Full Box ในฐานข้อมูลสินค้าหลักสำหรับพาร์ท ${selectedProduct.partNo} หรือไม่?\n\n(จาก ${selectedProduct.fullBox} เป็น ${newVal})`)) {
         try {
           const prodRef = doc(db, "products", selectedProduct.id);
@@ -291,7 +295,8 @@ export default function StockOutView({ currentUser, onAddToSyncQueue }: StockOut
   };
 
   const generateAutoLabel = () => {
-    const lb = `LB-${Date.now().toString().slice(-8)}`;
+    const empSuffix = currentUser?.id ? `-${currentUser.id}` : "";
+    const lb = `LB-${Date.now().toString().slice(-8)}${empSuffix}`;
     setLabelId(lb);
   };
 
@@ -366,8 +371,8 @@ export default function StockOutView({ currentUser, onAddToSyncQueue }: StockOut
 
     setQueue([...queue, item]);
 
+    setLabelId(""); // Label ID เมื่อกดเข้าตะกร้าแล้วให้ลบออก
     // Keep inputs for next item as per user request ("ให้แสดงค่าค้างไว้ หลังจากกดใส่ตะกร้าแล้ว จนกว่าจะกดเปลี่ยน")
-    // setLabelId("");
     // setPartSearch("");
     // setSelectedProduct(null);
     setNegativeError(null);
@@ -728,8 +733,14 @@ export default function StockOutView({ currentUser, onAddToSyncQueue }: StockOut
               <input
                 type="number"
                 disabled={!selectedProduct}
-                value={editFullBox}
-                onChange={(e) => handleFullBoxChange(Number(e.target.value))}
+                value={editFullBox || ""}
+                onChange={(e) => handleFullBoxTyping(Number(e.target.value))}
+                onBlur={(e) => handleFullBoxConfirm(Number(e.target.value))}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    handleFullBoxConfirm(Number((e.target as HTMLInputElement).value));
+                  }
+                }}
                 className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-gray-50 disabled:text-gray-400 font-mono font-bold"
               />
             </div>
