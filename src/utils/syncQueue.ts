@@ -2,7 +2,7 @@ import { collection, doc, getDoc, getDocs, query, where, writeBatch } from "fire
 import { db } from "../firebase";
 import { Product } from "../types";
 import { getSafeProductId } from "./productUtils";
-import { appendTransactionToGoogleSheets } from "./googleSheets";
+import { appendTransactionToGoogleSheets, getCachedAccessToken } from "./googleSheets";
 
 export interface SyncItem {
   id: string; // unique local ID
@@ -206,6 +206,34 @@ export const syncSingleItem = async (item: SyncItem): Promise<{ success: boolean
     return { success: true };
   } catch (err: any) {
     console.error("Sync single item failed:", err);
+    
+    // Check if we can fall back and sync directly to Google Sheets (e.g. under Quota Exceeded or fully offline)
+    const errMsg = err?.message || String(err);
+    const isQuotaExceeded = errMsg.includes("Quota") || errMsg.includes("quota") || err?.code === "resource-exhausted";
+    const isOffline = errMsg.includes("offline") || errMsg.includes("network") || err?.code === "unavailable" || localStorage.getItem("wsm_sandbox_mode") === "true";
+    
+    const spreadsheetId = typeof window !== "undefined" ? localStorage.getItem("wsm_sheets_id") : null;
+    const accessToken = getCachedAccessToken();
+    
+    if ((isQuotaExceeded || isOffline) && spreadsheetId && accessToken) {
+      console.warn("Firestore write blocked or offline. Attempting direct Google Sheets sync fallback...");
+      try {
+        await appendTransactionToGoogleSheets({
+          ...item,
+          id: item.id || `sync_${Date.now()}`
+        }, true); // force sync to Sheets bypassing auto-sync check
+        
+        console.log("Direct Google Sheets sync fallback succeeded for item:", item.id);
+        return { success: true };
+      } catch (sheetsErr: any) {
+        console.error("Direct Sheets fallback sync failed:", sheetsErr);
+        return { 
+          success: false, 
+          error: `Firestore Error: ${errMsg}. Direct Sheets Sync Error: ${sheetsErr.message || sheetsErr}` 
+        };
+      }
+    }
+    
     return { success: false, error: err.message || "เกิดข้อผิดพลาดในการเซฟข้อมูลสต๊อก" };
   }
 };

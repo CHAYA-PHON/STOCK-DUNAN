@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { collection, getDocs, writeBatch, doc, setDoc, onSnapshot } from "firebase/firestore";
+import { collection, getDocs, writeBatch, doc, setDoc, onSnapshot, getDocsFromCache } from "firebase/firestore";
 import { db } from "../firebase";
 import { Product, Employee } from "../types";
 import { 
@@ -201,8 +201,15 @@ export default function GoogleSheetsView({ currentUser }: GoogleSheetsViewProps)
       // 1. Ensure tab exists
       await setupRequiredSheets(accessToken, sId);
 
-      // 2. Fetch products from Firestore
-      const snap = await getDocs(collection(db, "products"));
+      // 2. Fetch products from Firestore with fallback to cache if server fails (e.g., Quota Exceeded / Offline Sandbox)
+      let snap;
+      try {
+        snap = await getDocs(collection(db, "products"));
+      } catch (err: any) {
+        console.warn("Could not fetch products from server, trying local cache fallback:", err);
+        snap = await getDocsFromCache(collection(db, "products"));
+      }
+      
       const productsList: Product[] = [];
       snap.forEach((docSnap) => {
         productsList.push({ id: docSnap.id, ...docSnap.data() } as Product);
@@ -347,8 +354,15 @@ export default function GoogleSheetsView({ currentUser }: GoogleSheetsViewProps)
     try {
       await setupRequiredSheets(accessToken, sId);
 
-      // Fetch all inventory logs from Firestore
-      const snap = await getDocs(collection(db, "inventory_log"));
+      // Fetch all inventory logs from Firestore with fallback to cache if server fails (e.g., Quota Exceeded / Offline Sandbox)
+      let snap;
+      try {
+        snap = await getDocs(collection(db, "inventory_log"));
+      } catch (err: any) {
+        console.warn("Could not fetch inventory logs from server, trying local cache fallback:", err);
+        snap = await getDocsFromCache(collection(db, "inventory_log"));
+      }
+
       const logsList: any[] = [];
       snap.forEach((d) => {
         logsList.push({ id: d.id, ...d.data() });
@@ -413,6 +427,82 @@ export default function GoogleSheetsView({ currentUser }: GoogleSheetsViewProps)
     } catch (err: any) {
       console.error(err);
       setStatusMessage({ text: `ส่งออกประวัติล้มเหลว: ${err.message || err}`, type: "error" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Export local location stocks database to Google Sheets
+  const handleExportLocations = async () => {
+    if (!accessToken) {
+      setStatusMessage({ text: "กรุณาเข้าสู่ระบบ Google ก่อนดำเนินการ", type: "error" });
+      return;
+    }
+    const sId = extractSpreadsheetId(sheetUrl);
+    if (!sId) {
+      setStatusMessage({ text: "กรุณาระบุ Google Sheet URL ที่ถูกต้อง", type: "error" });
+      return;
+    }
+
+    const confirmExport = window.confirm("คุณต้องการเขียนทับข้อมูลแท็บ 'Locations' ใน Google Sheets ด้วยยอดคงเหลือรายโลเคชั่นจากคลังหลักปัจจุบันใช่หรือไม่?");
+    if (!confirmExport) return;
+
+    setLoading(true);
+    setStatusMessage({ text: "กำลังส่งออกข้อมูลยอดรายโลเคชั่น...", type: "info" });
+
+    try {
+      await setupRequiredSheets(accessToken, sId);
+
+      // Fetch location stocks with fallback to cache
+      let snap;
+      try {
+        snap = await getDocs(collection(db, "location_stocks"));
+      } catch (err: any) {
+        console.warn("Could not fetch location stocks from server, trying local cache fallback:", err);
+        snap = await getDocsFromCache(collection(db, "location_stocks"));
+      }
+
+      const locationsList: any[] = [];
+      snap.forEach((d) => {
+        locationsList.push({ id: d.id, ...d.data() });
+      });
+
+      const headers = [
+        "Location Stock ID",
+        "Location Name",
+        "Part Number",
+        "Part Name",
+        "Customer Name",
+        "Current Quantity",
+        "Last Updated"
+      ];
+
+      const rows = locationsList.map((l) => {
+        let tsStr = "";
+        if (l.lastUpdated?.seconds) {
+          tsStr = new Date(l.lastUpdated.seconds * 1000).toLocaleString("th-TH");
+        } else if (l.lastUpdated) {
+          tsStr = new Date(l.lastUpdated).toLocaleString("th-TH");
+        }
+        return [
+          l.id,
+          l.locationName || "-",
+          l.partNo || "",
+          l.partName || "",
+          l.customer || "",
+          Number(l.qty) || 0,
+          tsStr
+        ];
+      });
+
+      await overwriteSheetValues(sId, accessToken, "Locations", headers, rows);
+      setStatusMessage({ 
+        text: `ส่งออกข้อมูลยอดคลังรายโลเคชั่นเรียบร้อยแล้ว! อัปโหลดสำเร็จทั้งหมด ${locationsList.length} แถวข้อมูล`, 
+        type: "success" 
+      });
+    } catch (err: any) {
+      console.error(err);
+      setStatusMessage({ text: `ส่งออกข้อมูลโลเคชั่นล้มเหลว: ${err.message || err}`, type: "error" });
     } finally {
       setLoading(false);
     }
@@ -623,9 +713,9 @@ export default function GoogleSheetsView({ currentUser }: GoogleSheetsViewProps)
               </div>
             )}
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {/* Product Sync Section */}
-              <div className="border border-slate-100 rounded-2xl p-5 bg-slate-50/50 space-y-4">
+              <div className="border border-slate-100 rounded-2xl p-5 bg-slate-50/50 space-y-4 flex flex-col justify-between">
                 <div className="space-y-1">
                   <h4 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                     <span className="h-1.5 w-1.5 bg-blue-500 rounded-full"></span>
@@ -636,7 +726,7 @@ export default function GoogleSheetsView({ currentUser }: GoogleSheetsViewProps)
                   </p>
                 </div>
                 
-                <div className="space-y-2">
+                <div className="space-y-2 pt-2">
                   {/* Export Button */}
                   <button
                     onClick={handleExportProducts}
@@ -644,7 +734,7 @@ export default function GoogleSheetsView({ currentUser }: GoogleSheetsViewProps)
                     className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2.5 px-3 rounded-xl flex items-center justify-center gap-2 cursor-pointer transition disabled:opacity-50 active:scale-[0.98]"
                   >
                     <UploadCloud className="w-4 h-4" />
-                    <span>อัปโหลดสินค้าไป Google Sheets (Export)</span>
+                    <span>อัปโหลดสินค้า (Export Products)</span>
                   </button>
 
                   {/* Import Button */}
@@ -654,24 +744,24 @@ export default function GoogleSheetsView({ currentUser }: GoogleSheetsViewProps)
                     className="w-full bg-white hover:bg-slate-50 text-slate-700 font-bold border border-slate-200 text-xs py-2.5 px-3 rounded-xl flex items-center justify-center gap-2 cursor-pointer transition disabled:opacity-50 active:scale-[0.98]"
                   >
                     <DownloadCloud className="w-4 h-4 text-emerald-600" />
-                    <span>นำเข้าสินค้าเข้าสู่ระบบ (Import)</span>
+                    <span>นำเข้าสินค้าเข้าระบบ (Import)</span>
                   </button>
                 </div>
               </div>
 
               {/* Inventory Logs Section */}
-              <div className="border border-slate-100 rounded-2xl p-5 bg-slate-50/50 space-y-4">
+              <div className="border border-slate-100 rounded-2xl p-5 bg-slate-50/50 space-y-4 flex flex-col justify-between">
                 <div className="space-y-1">
                   <h4 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                     <span className="h-1.5 w-1.5 bg-amber-500 rounded-full"></span>
                     ประวัติธุรกรรมคลังสินค้า (Inventory Logs)
                   </h4>
                   <p className="text-[11px] text-slate-500 leading-relaxed">
-                    ส่งออกบันทึกการรับเข้า โอนออก และปรับสัดส่วนสินค้าคงคลังประเภทย้อนหลังทั้งหมดลงในชีตเพื่อนำเสนอและทำรายงาน
+                    ส่งออกบันทึกการรับเข้า โอนออก และปรับสัดส่วนสินค้าคงคลังประเภทย้อนหลังทั้งหมดลงในชีตเพื่อทำรายงาน
                   </p>
                 </div>
 
-                <div className="space-y-2 pt-1">
+                <div className="space-y-2 pt-2">
                   {/* Export Logs Button */}
                   <button
                     onClick={handleExportLogs}
@@ -679,11 +769,40 @@ export default function GoogleSheetsView({ currentUser }: GoogleSheetsViewProps)
                     className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2.5 px-3 rounded-xl flex items-center justify-center gap-2 cursor-pointer transition disabled:opacity-50 active:scale-[0.98]"
                   >
                     <UploadCloud className="w-4 h-4" />
-                    <span>ส่งออกประวัติธุรกรรมคลังทั้งหมด (Export Logs)</span>
+                    <span>ส่งออกประวัติธุรกรรม (Export Logs)</span>
                   </button>
 
                   <div className="text-[10px] text-slate-400 leading-normal text-center italic">
-                    *ประวัติจะถูกเขียนทับข้อมูลในแท็บ 'InventoryLogs' ทั้งหมดอย่างสวยงาม
+                    *ประวัติจะเขียนทับในแท็บ 'InventoryLogs'
+                  </div>
+                </div>
+              </div>
+
+              {/* Location Stocks Section */}
+              <div className="border border-slate-100 rounded-2xl p-5 bg-slate-50/50 space-y-4 flex flex-col justify-between">
+                <div className="space-y-1">
+                  <h4 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <span className="h-1.5 w-1.5 bg-indigo-500 rounded-full"></span>
+                    ยอดคลังรายโลเคชั่น (Location Stocks)
+                  </h4>
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    ส่งออกข้อมูลยอดสต๊อกคงเหลือจริงแบ่งแยกตามตลาดย่อยหรือตำแหน่งจัดเก็บทั้งหมด ลงไปยังชีตส่วนกลาง
+                  </p>
+                </div>
+
+                <div className="space-y-2 pt-2">
+                  {/* Export Locations Button */}
+                  <button
+                    onClick={handleExportLocations}
+                    disabled={loading || !accessToken}
+                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2.5 px-3 rounded-xl flex items-center justify-center gap-2 cursor-pointer transition disabled:opacity-50 active:scale-[0.98]"
+                  >
+                    <UploadCloud className="w-4 h-4" />
+                    <span>ส่งออกยอดโลเคชั่น (Export Stocks)</span>
+                  </button>
+
+                  <div className="text-[10px] text-slate-400 leading-normal text-center italic">
+                    *ยอดจะเขียนทับในแท็บ 'Locations'
                   </div>
                 </div>
               </div>

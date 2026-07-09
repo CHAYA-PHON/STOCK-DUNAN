@@ -24,5 +24,6 @@ Format definition:
 - Current Version after adding Searchable Locations & Negative Stock Prevention (Implemented fully searchable combobox dropdowns for source and destination locations in relocation system, paired with real-time stock-out warnings and validation to block negative physical location stocks): `v26.12.0`
 - Current Version after fixing Sync Queue Duplicate Label notifications, Auto-populating stock-out quantity from matching stock-in labels, Deferring Full Box confirmations, appending Employee IDs to auto-labels, and clearing Label input upon adding to cart: `v26.13.0`
 - Current Version after fixing Offline/Sandbox Session Auto-logout issue (Bypassed online checks when Sandbox is active and protected local session from deletions on Firestore cache misses or Quota Exceeded errors): `v26.13.1`
+- Current Version after adding Direct Google Sheets Sync Fallback (Decoupled sync queue from Firestore success, added fallback to local Firestore IndexedDB cache for Google Sheets manual exports, and added a Google Sheets bypass button allowing direct transaction uploads when Firestore quota is exceeded or offline): `v26.14.0`
 
 

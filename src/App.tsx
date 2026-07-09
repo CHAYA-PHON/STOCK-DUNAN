@@ -4,6 +4,7 @@ import { db } from "./firebase";
 import { Employee, NotificationItem, APP_VERSION, APP_TITLE } from "./types";
 import { seedDatabaseIfEmpty } from "./utils/seed";
 import { getSyncQueue, saveSyncQueue, addToSyncQueue, syncSingleItem, SyncItem, reconcileProductMasterStocks } from "./utils/syncQueue";
+import { appendTransactionToGoogleSheets, getCachedAccessToken } from "./utils/googleSheets";
 import {
   DashboardView,
   StockInView,
@@ -121,7 +122,7 @@ export default function App() {
     setSyncQueue(updated);
   };
 
-  const triggerSync = async () => {
+  const triggerSync = async (forceDirectSheets: boolean = false) => {
     if (isSyncingAll) return;
     const currentQueue = getSyncQueue();
     const pendingItems = currentQueue.filter((item) => item.status === "pending" || item.status === "failed");
@@ -143,8 +144,29 @@ export default function App() {
     let failCount = 0;
     let finalQueue = [...updatedQueue];
 
+    const spreadsheetId = localStorage.getItem("wsm_sheets_id");
+    const accessToken = getCachedAccessToken();
+
     for (const item of pendingItems) {
-      const res = await syncSingleItem(item);
+      let res;
+      if (forceDirectSheets) {
+        if (!spreadsheetId || !accessToken) {
+          res = { success: false, error: "ไม่พบข้อมูล สเปรดชีต ID หรือ สิทธิ์ Google Sheets ในเครื่องนี้ กรุณาเข้าสู่ระบบ Google ในแท็บ Google Sheets ก่อน" };
+        } else {
+          try {
+            await appendTransactionToGoogleSheets({
+              ...item,
+              id: item.id || `sync_${Date.now()}`
+            }, true);
+            res = { success: true };
+          } catch (sheetsErr: any) {
+            res = { success: false, error: `Direct Sheets Sync Error: ${sheetsErr.message || sheetsErr}` };
+          }
+        }
+      } else {
+        res = await syncSingleItem(item);
+      }
+
       const queueNow = getSyncQueue();
       if (res.success) {
         successCount++;
@@ -169,8 +191,10 @@ export default function App() {
     if (successCount > 0) {
       const newToast: NotificationItem = {
         id: `toast_${Date.now()}`,
-        title: "ซิงค์ข้อมูลคิวสำเร็จ",
-        message: `อัปโหลดรายการจากระบบคิวจำลองชั่วคราวขึ้นเซิร์ฟเวอร์สำเร็จเรียบร้อยแล้ว จำนวน ${successCount} รายการ`,
+        title: forceDirectSheets ? "ส่งเข้า Google Sheets สำเร็จ!" : "ซิงค์ข้อมูลคิวสำเร็จ",
+        message: forceDirectSheets 
+          ? `ส่งรายการทั้งหมดออกจากคิวออฟไลน์ตรงเข้า Google Sheet ส่วนกลางสำเร็จแล้ว จำนวน ${successCount} รายการ!`
+          : `อัปโหลดรายการจากระบบคิวจำลองชั่วคราวขึ้นเซิร์ฟเวอร์สำเร็จเรียบร้อยแล้ว จำนวน ${successCount} รายการ`,
         timestamp: new Date(),
         read: false,
         type: "system",
@@ -185,7 +209,7 @@ export default function App() {
       const newErrToast: NotificationItem = {
         id: `toast_err_${Date.now()}`,
         title: "⚠️ ตรวจพบรายการที่อัปโหลดไม่สำเร็จ",
-        message: `มีรายการซิงค์ล้มเหลวจำนวน ${failCount} รายการเนื่องจากเลขลาเบลซ้ำหรือปัญหาการเชื่อมต่อ กรุณาตรวจสอบหรือเปลี่ยนเลขลาเบลเพื่อลองใหม่อีกครั้ง`,
+        message: `มีรายการซิงค์ล้มเหลวจำนวน ${failCount} รายการ กรุณาตรวจสอบสิทธิ์บัญชี Google หรือปัญหาเลขลาเบลเพื่อลองใหม่อีกครั้ง`,
         timestamp: new Date(),
         read: false,
         type: "system",
@@ -193,7 +217,7 @@ export default function App() {
       setNotifications((prev) => [newErrToast, ...prev]);
 
       // Trigger a direct window alert to ensure the user gets immediate attention!
-      alert(`⚠️ ตรวจพบรายการรออัปโหลดที่มีปัญหา (${failCount} รายการ)\n\nสาเหตุที่ล้มเหลว:\n${errorMsg}\n\nระบบไม่สามารถซิงค์รายการเหล่านี้ได้เนื่องจากใช้เลขลาเบลที่ซ้ำกับระบบคลังหลัก กรุณาแก้ไข เปลี่ยนเลขลาเบลใหม่ หรือลบรายการดังกล่าวออกจากคิวรออัปโหลด`);
+      alert(`⚠️ ตรวจพบรายการรออัปโหลดที่มีปัญหา (${failCount} รายการ)\n\nสาเหตุที่ล้มเหลว:\n${errorMsg}\n\nระบบไม่สามารถซิงค์รายการเหล่านี้ได้เนื่องจากเลขลาเบลซ้ำหรือไม่ได้ลงชื่อเข้าใช้ Google ชีตส่วนกลาง`);
     }
   };
 
@@ -706,10 +730,11 @@ export default function App() {
             </p>
             <div className="h-[1px] bg-slate-800 my-1"></div>
             <p className="text-slate-400 leading-relaxed text-[11px]">
-              📌 <strong className="text-amber-400 font-bold">ท่านสามารถใช้งานแอปต่อได้ทันทีโดย:</strong>
+              📌 <strong className="text-amber-400 font-bold">ท่านสามารถใช้งานแอปและแชร์ข้อมูลร่วมกันได้ทันทีโดย:</strong>
             </p>
             <ul className="list-disc list-inside space-y-1.5 text-slate-300 text-[11px] pl-1">
-              <li>สลับเข้าใช้งาน <strong className="text-emerald-400 font-bold">โหมดทดลองออฟไลน์ (Offline Sandbox)</strong> ระบบจะจำลองฐานข้อมูลเก็บไว้บนอุปกรณ์ของคุณโดยตรง</li>
+              <li>สลับเข้าใช้งาน <strong className="text-emerald-400 font-bold">โหมดทดลองออฟไลน์ (Offline Sandbox)</strong> ระบบจะปรับปรุงเสมือนจริงบนเบราว์เซอร์ของท่านโดยตรง</li>
+              <li>จากนั้นท่านจะสามารถ <strong className="text-emerald-400 font-bold">ส่งและซิงค์ยอดสินค้ากับธุรกรรมคิวออฟไลน์ตรงเข้า Google Sheets ส่วนกลาง</strong> ทำให้ข้อมูลทุกฝ่ายเชื่อมต่อถึงกันได้ทันที!</li>
               <li>หรือ รอการรีเซ็ตโควตาฟรีอัตโนมัติจาก Google ในรอบถัดไป</li>
             </ul>
           </div>
@@ -1075,13 +1100,24 @@ export default function App() {
                 <div className="flex justify-between items-center pb-2 border-b border-gray-100 mb-2">
                   <h3 className="font-bold text-gray-700">รายการรออัปโหลด ({syncQueue.length})</h3>
                   {syncQueue.length > 0 && (
-                    <button
-                      onClick={triggerSync}
-                      disabled={isSyncingAll}
-                      className="bg-red-600 hover:bg-red-700 text-white font-bold py-0.5 px-1.5 rounded text-[9px] disabled:opacity-50 cursor-pointer"
-                    >
-                      {isSyncingAll ? "ซิงค์..." : "ซิงค์ทันที"}
-                    </button>
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => triggerSync(false)}
+                        disabled={isSyncingAll}
+                        className="bg-red-600 hover:bg-red-700 text-white font-bold py-0.5 px-1.5 rounded text-[8px] disabled:opacity-50 cursor-pointer"
+                        title="ซิงค์ข้อมูลกับคลาวด์เซิร์ฟเวอร์หลัก"
+                      >
+                        Cloud
+                      </button>
+                      <button
+                        onClick={() => triggerSync(true)}
+                        disabled={isSyncingAll}
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-0.5 px-1.5 rounded text-[8px] disabled:opacity-50 cursor-pointer"
+                        title="ส่งออกยอดพาร์ทตรงเข้า Google Sheets ส่วนกลาง"
+                      >
+                        Sheets
+                      </button>
+                    </div>
                   )}
                 </div>
 
@@ -1211,13 +1247,24 @@ export default function App() {
                       <div className="flex justify-between items-center pb-2 border-b border-gray-100 mb-2">
                         <h3 className="font-bold text-gray-700">รายการรออัปโหลด ({syncQueue.length})</h3>
                         {syncQueue.length > 0 && (
-                          <button
-                            onClick={triggerSync}
-                            disabled={isSyncingAll}
-                            className="bg-red-600 hover:bg-red-700 text-white font-bold py-1 px-2 rounded text-[10px] disabled:opacity-50 cursor-pointer"
-                          >
-                            {isSyncingAll ? "กำลังซิงค์..." : "ซิงค์ทันที"}
-                          </button>
+                          <div className="flex gap-1.5">
+                            <button
+                              onClick={() => triggerSync(false)}
+                              disabled={isSyncingAll}
+                              className="bg-red-600 hover:bg-red-700 text-white font-bold py-1 px-1.5 rounded text-[9px] disabled:opacity-50 cursor-pointer"
+                              title="ซิงค์ข้อมูลกับคลาวด์เซิร์ฟเวอร์หลัก"
+                            >
+                              Cloud DB
+                            </button>
+                            <button
+                              onClick={() => triggerSync(true)}
+                              disabled={isSyncingAll}
+                              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1 px-1.5 rounded text-[9px] disabled:opacity-50 cursor-pointer"
+                              title="ส่งออกยอดพาร์ทตรงเข้า Google Sheets ส่วนกลาง"
+                            >
+                              Sheets
+                            </button>
+                          </div>
                         )}
                       </div>
 
@@ -1606,7 +1653,7 @@ export default function App() {
       <main className="flex-1 overflow-y-auto p-4 md:p-8 flex flex-col h-full">
 
         {sandboxActive && (
-          <div className="bg-gradient-to-r from-emerald-600 via-emerald-700 to-teal-800 text-white px-5 py-4.5 rounded-2xl mb-6 shadow-lg shadow-emerald-950/10 border border-emerald-500/30 flex flex-col md:flex-row md:items-center justify-between gap-4 animate-fade-in relative overflow-hidden shrink-0">
+          <div className="bg-gradient-to-r from-emerald-600 via-emerald-700 to-teal-800 text-white px-5 py-4.5 rounded-2xl mb-6 shadow-lg shadow-emerald-950/10 border border-emerald-500/30 flex flex-col lg:flex-row lg:items-center justify-between gap-4 animate-fade-in relative overflow-hidden shrink-0">
             <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full blur-2xl pointer-events-none"></div>
             <div className="space-y-1">
               <p className="font-extrabold text-sm flex items-center gap-2">
@@ -1614,18 +1661,29 @@ export default function App() {
                 <span>เปิดใช้งานโหมดทดลองออฟไลน์ (Offline Sandbox Active)</span>
               </p>
               <p className="text-xs text-emerald-100 leading-normal">
-                ระบบจำลองฐานข้อมูลเสมือนถูกเปิดใช้งานเพื่อแก้ปัญหาโควตาเซิร์ฟเวอร์เต็ม ข้อมูลทั้งหมดจะจัดเก็บและทำงานในเว็บเบราว์เซอร์ของท่านทันที รวดเร็ว และไม่มีสิทธิ์ถูกบล็อกหรือขัดข้อง!
+                ระบบจำลองฐานข้อมูลเสมือนถูกเปิดใช้งานเพื่อแก้ปัญหาโควตาเซิร์ฟเวอร์เต็ม ข้อมูลทั้งหมดจะจัดเก็บในเครื่องของท่านเรียบร้อย และท่านสามารถกดซิงค์ข้อมูลตรงเข้า Google Sheet ส่วนกลางได้ทันที!
               </p>
             </div>
-            <button
-              onClick={() => {
-                localStorage.removeItem("wsm_sandbox_mode");
-                window.location.reload();
-              }}
-              className="bg-white hover:bg-emerald-50 text-emerald-800 font-bold text-xs px-4 py-2.5 rounded-xl transition shadow-xs hover:shadow-md cursor-pointer shrink-0 active:scale-[0.98]"
-            >
-              กลับสู่โหมดออนไลน์ (Cloud DB)
-            </button>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              {syncQueue.length > 0 && (
+                <button
+                  onClick={() => triggerSync(true)}
+                  disabled={isSyncingAll}
+                  className="bg-amber-500 hover:bg-amber-600 text-[#111] font-black text-xs px-4 py-2.5 rounded-xl transition shadow-xs hover:shadow-md cursor-pointer disabled:opacity-50 active:scale-[0.98]"
+                >
+                  {isSyncingAll ? "กำลังส่งออก..." : `ส่งยอดคิว (${syncQueue.length}) เข้า Google Sheet ตรงๆ`}
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  localStorage.removeItem("wsm_sandbox_mode");
+                  window.location.reload();
+                }}
+                className="bg-white hover:bg-emerald-50 text-emerald-800 font-bold text-xs px-4 py-2.5 rounded-xl transition shadow-xs hover:shadow-md cursor-pointer shrink-0 active:scale-[0.98]"
+              >
+                กลับสู่โหมดออนไลน์ (Cloud DB)
+              </button>
+            </div>
           </div>
         )}
 

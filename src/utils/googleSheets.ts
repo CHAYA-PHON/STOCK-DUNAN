@@ -186,9 +186,9 @@ export const readSheetValues = async (
 };
 
 // 6. Automatically append a single transaction item to Google Sheets (Real-time auto-sync)
-export const appendTransactionToGoogleSheets = async (item: any) => {
+export const appendTransactionToGoogleSheets = async (item: any, force: boolean = false) => {
   try {
-    const isEnabled = typeof window !== "undefined" && localStorage.getItem("wsm_sheets_auto_sync") === "true";
+    const isEnabled = typeof window !== "undefined" && (localStorage.getItem("wsm_sheets_auto_sync") === "true" || force);
     if (!isEnabled) return;
 
     const spreadsheetId = typeof window !== "undefined" ? localStorage.getItem("wsm_sheets_id") : null;
